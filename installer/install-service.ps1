@@ -4,8 +4,8 @@ param(
 
     [string]$InstallDir = "$env:ProgramFiles\ProjectX\Backend",
     [string]$ServiceName = "ProjectXBackend",
-    [string]$ServiceDisplayName = "ProjectX Backend Service",
-    [string]$ServiceDescription = "ProjectX API and local dashboard service",
+    [string]$ServiceDisplayName = "ADAU Backend Service",
+    [string]$ServiceDescription = "ADAU API and local dashboard service",
     # Kestrel binds loopback only — nginx (install-nginx.ps1) fronts it for LAN access.
     [string]$ApiUrls = "http://127.0.0.1:5055",
     [string]$DashboardUrl = "http://127.0.0.1:5055/system",
@@ -251,7 +251,7 @@ function Test-TcpPortOpen {
 }
 
 if (-not (Test-TcpPortOpen -HostName $DbHost -Port $DbPort)) {
-    throw "Database endpoint '${DbHost}:${DbPort}' is unreachable. Install/start PostgreSQL and verify credentials before installing ProjectX service."
+    throw "Database endpoint '${DbHost}:${DbPort}' is unreachable. Install/start PostgreSQL and verify credentials before installing ADAU service."
 }
 
 $serviceBinaryPath = "`"$exePath`" --urls `"$ApiUrls`""
@@ -309,7 +309,7 @@ function Invoke-ElevatedServiceAction {
     catch {
         [System.Windows.Forms.MessageBox]::Show(
             "Failed to run service action `${Action}: `$(`$_.Exception.Message)",
-            "ProjectX Tray",
+            "ADAU Tray",
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error
         ) | Out-Null
@@ -328,10 +328,10 @@ catch {
     catch { `$notifyIcon.Icon = [System.Drawing.SystemIcons]::Application }
 }
 `$notifyIcon.Visible = `$true
-`$notifyIcon.Text = "ProjectX Server: initializing"
+`$notifyIcon.Text = "ADAU Server: initializing"
 
 `$contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-`$openItem = `$contextMenu.Items.Add("Open ProjectX")
+`$openItem = `$contextMenu.Items.Add("Open ADAU")
 `$openItem.add_Click({
     Start-Process `$dashboardUrl | Out-Null
 })
@@ -358,8 +358,8 @@ catch {
 `$exitItem = `$contextMenu.Items.Add("Stop server and exit")
 `$exitItem.add_Click({
     `$confirm = [System.Windows.Forms.MessageBox]::Show(
-        "Stop the ProjectX server and exit?",
-        "ProjectX",
+        "Stop the ADAU server and exit?",
+        "ADAU",
         [System.Windows.Forms.MessageBoxButtons]::YesNo,
         [System.Windows.Forms.MessageBoxIcon]::Question)
     if (`$confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
@@ -369,7 +369,7 @@ catch {
         catch {
             [System.Windows.Forms.MessageBox]::Show(
                 "Failed to stop the server: `$(`$_.Exception.Message)",
-                "ProjectX Tray",
+                "ADAU Tray",
                 [System.Windows.Forms.MessageBoxButtons]::OK,
                 [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
         }
@@ -396,11 +396,11 @@ catch {
 `$timer.Interval = 4000
 `$timer.add_Tick({
     `$state = Get-ServiceStateSafe
-    `$notifyIcon.Text = "ProjectX Server: `$state"
+    `$notifyIcon.Text = "ADAU Server: `$state"
 })
 `$timer.Start()
 
-`$notifyIcon.Text = "ProjectX Server: `$(Get-ServiceStateSafe)"
+`$notifyIcon.Text = "ADAU Server: `$(Get-ServiceStateSafe)"
 [System.Windows.Forms.Application]::Run()
 "@
 
@@ -413,13 +413,18 @@ catch {
     $startupFolder = [Environment]::GetFolderPath("Startup")
     $programsFolder = [Environment]::GetFolderPath("Programs")
 
-    $startupShortcut = $wsh.CreateShortcut((Join-Path $startupFolder "ProjectX Tray Monitor.lnk"))
+    # Remove shortcuts under the legacy ProjectX name (install over an old version) so the tray does not start twice.
+    foreach ($legacy in @((Join-Path $startupFolder "ProjectX Tray Monitor.lnk"), (Join-Path $programsFolder "ProjectX Tray Monitor.lnk"))) {
+        if (Test-Path $legacy) { Remove-Item $legacy -Force -ErrorAction SilentlyContinue }
+    }
+
+    $startupShortcut = $wsh.CreateShortcut((Join-Path $startupFolder "ADAU Tray Monitor.lnk"))
     $startupShortcut.TargetPath = $shortcutTarget
     $startupShortcut.Arguments = $shortcutArguments
     $startupShortcut.WorkingDirectory = $InstallDir
     $startupShortcut.Save()
 
-    $menuShortcut = $wsh.CreateShortcut((Join-Path $programsFolder "ProjectX Tray Monitor.lnk"))
+    $menuShortcut = $wsh.CreateShortcut((Join-Path $programsFolder "ADAU Tray Monitor.lnk"))
     $menuShortcut.TargetPath = $shortcutTarget
     $menuShortcut.Arguments = $shortcutArguments
     $menuShortcut.WorkingDirectory = $InstallDir
@@ -428,7 +433,7 @@ catch {
     # Launch the tray now, de-elevated via explorer.exe — a NotifyIcon created by an
     # elevated process is frequently not shown by the shell. The Startup shortcut
     # relaunches it (non-elevated) on every login.
-    Start-Process "explorer.exe" -ArgumentList ('"' + (Join-Path $programsFolder "ProjectX Tray Monitor.lnk") + '"')
+    Start-Process "explorer.exe" -ArgumentList ('"' + (Join-Path $programsFolder "ADAU Tray Monitor.lnk") + '"')
 }
 
 Write-Host "Service '$ServiceName' installed and started."

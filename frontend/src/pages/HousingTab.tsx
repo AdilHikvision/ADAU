@@ -54,7 +54,8 @@ function BlockRow({
                 style={{ marginLeft: depth * 22 }}
             >
                 <span className="material-symbols-outlined shrink-0 text-[18px] text-primary/70">
-                    {depth === 0 ? 'apartment' : children.length > 0 ? 'domain' : 'door_front'}
+                    {/* Структура университета: факультет → подразделения. */}
+                    {depth === 0 ? 'school' : children.length > 0 ? 'account_tree' : 'groups'}
                 </span>
                 <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-bold text-text-dark">{item.name}</p>
@@ -234,7 +235,7 @@ export function HousingTab() {
                 </div>
             ) : roots.length === 0 ? (
                 <div className="rounded-2xl bg-surface py-16 text-center shadow-md">
-                    <span className="material-symbols-outlined mb-3 text-5xl text-text-light">apartment</span>
+                    <span className="material-symbols-outlined mb-3 text-5xl text-text-light">school</span>
                     <p className="text-sm font-bold uppercase tracking-widest text-text-muted">
                         {t('housing.empty')}
                     </p>

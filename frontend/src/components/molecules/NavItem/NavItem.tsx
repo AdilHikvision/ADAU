@@ -18,9 +18,10 @@ export function NavItem({
             to={to}
             end={end}
             className={({ isActive }) =>
+                // Пункты живут только в боковом меню, а оно тёмно-серое — отсюда светлая палитра.
                 `group relative flex items-center gap-3.5 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${isActive
-                    ? 'bg-linear-to-r from-primary/12 to-primary/4 text-primary'
-                    : 'text-text-muted hover:bg-slate-75 hover:text-text-dark'
+                    ? 'bg-linear-to-r from-primary/35 to-primary/10 text-white'
+                    : 'text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-text'
                 }`
             }
         >

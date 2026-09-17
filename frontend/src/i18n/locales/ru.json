@@ -90,7 +90,7 @@
     "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Aktiv MTK",
+    "housing": "ADAU",
     "workforceSubtitle": "Attendance Management"
   },
   "parking": {
@@ -102,7 +102,7 @@
     "deleteCascade": "Все вложенные элементы будут удалены.",
     "nav": {
       "management": "Управление парковкой",
-      "residents": "Жильцы и транспорт",
+      "residents": "Студенты и транспорт",
       "reports": "Отчёты",
       "tariffs": "Тарифы",
       "history": "История",
@@ -214,7 +214,7 @@
       "homeTitle": "Aktiv Parking — Главная",
       "homeDesc": "Общее состояние модуля парковки",
       "tiles": {
-        "residents": "Жильцов",
+        "residents": "Студентов",
         "vehicles": "Транспорт",
         "activePermits": "Действует в белом списке",
         "expiringSoon": "Истекают за 7 дн",
@@ -230,15 +230,15 @@
       "entered": "Въезд",
       "exited": "Выезд",
       "inside": "Внутри",
-      "residentsTitle": "Жильцы и транспорт",
-      "residentsDesc": "Жильцы, их автомобили и статус пропусков",
-      "searchResident": "Поиск жильца…",
-      "allResidents": "Все жильцы",
+      "residentsTitle": "Студенты и транспорт",
+      "residentsDesc": "Студенты, их автомобили и статус пропусков",
+      "searchResident": "Поиск студента…",
+      "allResidents": "Все студенты",
       "unitShort": "Кв.",
       "vehiclesCount": "Машин: {{count}}",
-      "noResidents": "Жильцов нет.",
-      "addResident": "Добавить жильца",
-      "editResident": "Изменить жильца",
+      "noResidents": "Студентов нет.",
+      "addResident": "Добавить студента",
+      "editResident": "Изменить студента",
       "fullName": "ФИО",
       "phone": "Телефон",
       "unit": "Квартира / офис",
@@ -1197,7 +1197,7 @@
     "system": "СИСТЕМА",
     "devices": "Устройства",
     "access": "ДОСТУП",
-    "peopleAndResidents": "Жильцы и работники"
+    "peopleAndResidents": "Студенты и работники"
   },
   "topBar": {
     "searchPages": "Поиск страниц...",
@@ -1229,13 +1229,13 @@
       "systemStatus": "статус системы устройства логи здоровье",
       "parkingManagement": "управление парковкой места зоны",
       "parkingVehicles": "белый список транспорт машины номера",
-      "parkingHolders": "владельцы мест жильцы абоненты",
+      "parkingHolders": "владельцы мест студенты абоненты",
       "parkingBlacklist": "чёрный список заблокированные транспорт",
       "parkingPos": "касса пос оплата расчёт",
       "parkingTariffs": "тарифы цены ставки почасовой абонемент",
       "parkingHistory": "история въезды выезды журнал события",
       "parkingReports": "отчёты статистика парковка выручка",
-      "residents": "жильцы жители квартира блок корпус дом жкх"
+      "residents": "студенты факультет университет общежитие комната"
     }
   },
   "auth": {
@@ -1578,7 +1578,7 @@
       "saveFailed": "Не удалось сохранить",
       "importFailed": "Не удалось импортировать",
       "firstNameRequired": "Сначала введите имя.",
-      "loadResidents": "Не удалось загрузить жильцов"
+      "loadResidents": "Не удалось загрузить студентов"
     },
     "createPageHint": "Заполните данные, добавьте фото и биометрию.",
     "finish": "Готово",
@@ -1590,9 +1590,12 @@
       "source": {
         "file": "Файл",
         "webcam": "Камера",
-        "device": "Терминал"
+        "device": "Устройство"
       },
-      "selectDevice": "Выберите терминал",
+      "device": "Устройство",
+      "selectDevice": "Выберите устройство",
+      "fingerprintDevice": "Устройство для записи отпечатка",
+      "cardDevice": "Устройство для считывания карты",
       "selectDeviceHint": "Для захвата с устройства сначала выберите терминал или станцию регистрации.",
       "addFace": "Добавить лицо",
       "dataTitle": "Биометрические данные",
@@ -1609,20 +1612,20 @@
       "enrollers": "Станции регистрации",
       "readCardFromDevice": "Считать карту с устройства"
     },
-    "titleHousing": "Жильцы и работники",
-    "descriptionHousing": "Управляйте жильцами, работниками МТК, посетителями и их учётными данными доступа.",
-    "residents": "Жильцы",
-    "searchResidents": "Поиск жильцов...",
-    "addResident": "Добавить жильца",
+    "titleHousing": "Студенты и работники",
+    "descriptionHousing": "Управляйте студентами, работниками ADAU, посетителями и их учётными данными доступа.",
+    "residents": "Студенты",
+    "searchResidents": "Поиск студентов...",
+    "addResident": "Добавить студента",
     "personKind": "Тип записи",
     "kindEmployee": "Работник",
-    "kindResident": "Жилец",
+    "kindResident": "Студент",
     "kindVisitor": "Посетитель",
-    "apartment": "Квартира",
-    "block": "Блок / корпус",
+    "apartment": "Комната в общежитии",
+    "block": "Факультет",
     "apartmentPlaceholder": "Напр. 42",
-    "apartmentShort": "кв. {{value}}",
-    "noHousingBlocks": "Структура пуста — добавьте блоки в настройках."
+    "apartmentShort": "комн. {{value}}",
+    "noHousingBlocks": "Структура пуста — добавьте факультеты в настройках."
   },
   "schedulePlanner": {
     "searchEmployees": "Поиск сотрудников…",
@@ -2411,6 +2414,7 @@
     "tabMonthly": "Месяц",
     "tabTabel": "Табель",
     "pickEmployeeTitle": "Выбор сотрудника",
+    "kindSwitchLabel": "Показывать: сотрудников или студентов",
     "nightShiftHint": "Ночная смена — конец переходит на следующий день (+1 день)",
     "deptSearchPlaceholder": "Поиск отдела…",
     "empSearchPlaceholder": "Поиск сотрудника…",
@@ -2686,7 +2690,7 @@
       "roles": "Роли",
       "debugLogs": "Журналы отладки",
       "criteria": "Правила табеля",
-      "housing": "Структура ЖКХ"
+      "housing": "Структура университета"
     },
     "criteria": {
       "heading": "Правила табеля / Критерии посещаемости",
@@ -3047,27 +3051,27 @@
     "parkingPaidHint": "Стоянка тарифицируется, доступны тарифы, абонементы и касса."
   },
   "housing": {
-    "subtitle": "Жилой комплекс",
-    "structureTitle": "Структура ЖКХ",
-    "structureHint": "Комплекс → корпус → подъезд → этаж. Блок жильца выбирается из этого дерева.",
-    "addBlock": "Добавить блок",
-    "addChild": "Добавить вложенный блок",
-    "editBlock": "Изменить блок",
-    "deleteBlock": "Удалить блок",
-    "deleteConfirm": "Удалить блок «{{name}}»?",
-    "deleteResidentsWarning": "В блоке {{count}} жильц(ев) — они останутся без блока.",
-    "blockName": "Название блока",
-    "blockNamePlaceholder": "Напр. Корпус A",
+    "subtitle": "ADAU",
+    "structureTitle": "Структура университета",
+    "structureHint": "Факультеты и их подразделения. Факультет студента выбирается из этого дерева.",
+    "addBlock": "Добавить факультет",
+    "addChild": "Добавить подразделение",
+    "editBlock": "Изменить факультет",
+    "deleteBlock": "Удалить факультет",
+    "deleteConfirm": "Удалить факультет «{{name}}»?",
+    "deleteResidentsWarning": "На факультете {{count}} студент(ов) — они останутся без факультета.",
+    "blockName": "Название факультета",
+    "blockNamePlaceholder": "Напр. Агрономический факультет",
     "blockDescription": "Описание",
-    "parentBlock": "Родительский блок",
+    "parentBlock": "Родительский факультет",
     "parentLabel": "Внутри: {{name}}",
     "noParent": "В корне",
-    "residentsInBlock": "Жильцов в блоке",
-    "empty": "Структура пуста — добавьте первый блок.",
+    "residentsInBlock": "Студентов на факультете",
+    "empty": "Структура пуста — добавьте первый факультет.",
     "errors": {
       "load": "Не удалось загрузить структуру",
-      "save": "Не удалось сохранить блок",
-      "delete": "Не удалось удалить блок"
+      "save": "Не удалось сохранить факультет",
+      "delete": "Не удалось удалить факультет"
     }
   },
   "authRecords": {
@@ -3085,22 +3089,22 @@
     "colDevice": "Устройство",
     "colTime": "Время",
     "pickPersonTitle": "Выбор человека",
-    "allResidents": "Все жильцы",
-    "allBlocks": "Все блоки",
-    "wholeBlock": "весь блок",
-    "selectWholeBlock": "Выбрать весь блок ({{count}})",
-    "unselectWholeBlock": "Снять выбор с блока",
+    "allResidents": "Все студенты",
+    "allBlocks": "Все факультеты",
+    "wholeBlock": "весь факультет",
+    "selectWholeBlock": "Выбрать весь факультет ({{count}})",
+    "unselectWholeBlock": "Снять выбор с факультета",
     "multiDeptHint": "Отметьте галочками несколько отделов; клик по названию показывает его сотрудников.",
-    "multiBlockHint": "Отметьте галочками несколько блоков; клик по названию показывает его жильцов.",
+    "multiBlockHint": "Отметьте галочками несколько факультетов; клик по названию показывает его студентов.",
     "selectedCount": "Выбрано: {{count}}",
     "noDeptsSelected": "Отделы не выбраны — все сотрудники",
-    "noBlocksSelected": "Блоки не выбраны — все жильцы",
+    "noBlocksSelected": "Факультеты не выбраны — все студенты",
     "clearSelection": "Очистить выбор",
     "removeFromSelection": "Убрать {{name}} из выбора",
-    "blockSearchPlaceholder": "Поиск блока…",
-    "residentSearchPlaceholder": "Поиск жильца…",
-    "noResidentsInBlock": "В этом блоке нет жильцов.",
-    "apartmentShort": "кв."
+    "blockSearchPlaceholder": "Поиск факультета…",
+    "residentSearchPlaceholder": "Поиск студента…",
+    "noResidentsInBlock": "На этом факультете нет студентов.",
+    "apartmentShort": "комн."
   },
   "visitorPass": {
     "ticketTitle": "Гостевой пропуск",

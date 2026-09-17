@@ -4,7 +4,7 @@
 
 The installer version is stored in `installer/VERSION.txt` (single source of truth).
 `setup.iss` reads it at compile time (`AppVersion` / `VersionInfoVersion`), names the
-output `ProjectX-Backend-Setup-<version>.exe`, and writes `DisplayVersion` to the
+output `ADAU-Setup-<version>.exe`, and writes `DisplayVersion` to the
 Windows uninstall registry key.
 
 **Bump the version** by editing `installer/VERSION.txt` (e.g. `1.1.0` → `1.2.0`)
@@ -58,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1
 
 Output installer:
 
-- `artifacts\installer\ProjectX-Backend-Setup-<version>.exe`
+- `artifacts\installer\ADAU-Setup-<version>.exe`
   (the version comes from `VERSION.txt` — see section 0)
 
 ## 3) Install flow

@@ -42,7 +42,7 @@ const NAV_ITEMS: NavItem[] = [
     { labelKey: 'nav.people', path: '/people', icon: 'group', keywordsKey: 'topBar.navKeywords.people', housingLabelKey: 'nav.peopleAndResidents', housingKeywordsKey: 'topBar.navKeywords.residents', modules: ['workforce', 'housing'], anyOf: ['Employees.View', 'Visitors.View'] },
     { labelKey: 'nav.monitoring', path: '/monitoring', icon: 'monitor_heart', keywordsKey: 'topBar.navKeywords.monitoring', modules: ['workforce', 'housing'], anyOf: ['Devices.View'] },
     { labelKey: 'nav.accessLevels', path: '/access-levels', icon: 'admin_panel_settings', keywordsKey: 'topBar.navKeywords.accessLevels', modules: ['workforce', 'housing'], anyOf: ['AccessLevels.View'] },
-    { labelKey: 'nav.workHours', path: '/work-hours', icon: 'schedule', keywordsKey: 'topBar.navKeywords.workHours', modules: ['workforce'], anyOf: ['Attendance.View'] },
+    { labelKey: 'nav.workHours', path: '/work-hours', icon: 'schedule', keywordsKey: 'topBar.navKeywords.workHours', modules: ['workforce', 'housing'], anyOf: ['Attendance.View'] },
     { labelKey: 'nav.schedulePlanner', path: '/schedule-planner', icon: 'calendar_month', keywordsKey: 'topBar.navKeywords.schedulePlanner', modules: ['workforce'], anyOf: ['Schedules.View'] },
     { labelKey: 'nav.approvals', path: '/approvals', icon: 'approval', keywordsKey: 'topBar.navKeywords.approvals', modules: ['workforce'], anyOf: ['Attendance.Manage', 'Leaves.Manage'] },
     { labelKey: 'nav.geoZones', path: '/geo-zones', icon: 'my_location', keywordsKey: 'topBar.navKeywords.geoZones', modules: ['workforce'], anyOf: ['GeoZones.Manage'] },

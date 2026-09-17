@@ -48,7 +48,7 @@ const ROUTE_META: Record<string, RouteMeta> = {
 
     // ─── Aktiv Parking (embedded) — additive tabs ───
     '/parking/ap-home': { title: 'Aktiv Parking — Ana Səhifə', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
-    '/parking/ap-residents': { title: 'Aktiv Parking — Sakinlər', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
+    '/parking/ap-residents': { title: 'Aktiv Parking — Tələbələr', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/ap-vehicles': { title: 'Aktiv Parking — Avtomobillər', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/vehicles': { titleKey: 'parking.nav.vehicles', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },
     '/parking/holders': { titleKey: 'parking.nav.holders', breadcrumbKey: 'nav.dashboard', searchPlaceholderKey: 'common.search' },

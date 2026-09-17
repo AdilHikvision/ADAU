@@ -24,7 +24,7 @@ param(
     # quoted spaced paths, so a space-free prefix avoids the whole quoting problem.
     [string]$InstallRoot = "$env:ProgramData\ProjectX\nginx",
     [string]$ServiceName = "ProjectXNginx",
-    [string]$ServiceDisplayName = "ProjectX Nginx (LAN reverse proxy)",
+    [string]$ServiceDisplayName = "ADAU Nginx (LAN reverse proxy)",
     [string]$NginxVersion = "1.27.4",
     [string]$NssmVersion = "2.24",
     [string]$ConfTemplate = (Join-Path $PSScriptRoot "nginx\projectx-nginx.conf"),
@@ -162,7 +162,7 @@ try {
     # needed — nssm would otherwise drop quotes and nginx would split on a space.
     & $nssmExe set $ServiceName AppParameters "-p $prefix" | Out-Null
     & $nssmExe set $ServiceName DisplayName $ServiceDisplayName | Out-Null
-    & $nssmExe set $ServiceName Description "ProjectX LAN reverse proxy (nginx) -> 127.0.0.1:$BackendPort" | Out-Null
+    & $nssmExe set $ServiceName Description "ADAU LAN reverse proxy (nginx) -> 127.0.0.1:$BackendPort" | Out-Null
     & $nssmExe set $ServiceName Start SERVICE_AUTO_START | Out-Null
     # Stop nginx gracefully, then let nssm terminate any stragglers.
     & $nssmExe set $ServiceName AppStopMethodConsole 5000 | Out-Null

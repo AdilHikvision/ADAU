@@ -90,7 +90,7 @@
     "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Aktiv MTK",
+    "housing": "ADAU",
     "workforceSubtitle": "Attendance Management"
   },
   "parking": {
@@ -102,7 +102,7 @@
     "deleteCascade": "Bütün daxili elementlər silinəcək.",
     "nav": {
       "management": "Parklanma idarəetməsi",
-      "residents": "Sakinlər və NV",
+      "residents": "Tələbələr və NV",
       "reports": "Hesabatlar",
       "tariffs": "Tariflər",
       "history": "Tarixçə",
@@ -212,7 +212,7 @@
       "homeTitle": "Aktiv Parking — Ana səhifə",
       "homeDesc": "Parklanma modulunun ümumi vəziyyəti",
       "tiles": {
-        "residents": "Sakinlər",
+        "residents": "Tələbələr",
         "vehicles": "Nəqliyyat",
         "activePermits": "Ağ siyahıda aktiv",
         "expiringSoon": "7 gündə bitir",
@@ -228,15 +228,15 @@
       "entered": "Giriş",
       "exited": "Çıxış",
       "inside": "İçəridə",
-      "residentsTitle": "Sakinlər və nəqliyyat",
-      "residentsDesc": "Sakinlər, onların avtomobilləri və icazə statusu",
-      "searchResident": "Sakin axtar…",
-      "allResidents": "Bütün sakinlər",
+      "residentsTitle": "Tələbələr və nəqliyyat",
+      "residentsDesc": "Tələbələr, onların avtomobilləri və icazə statusu",
+      "searchResident": "Tələbə axtar…",
+      "allResidents": "Bütün tələbələr",
       "unitShort": "Mənzil",
       "vehiclesCount": "NV: {{count}}",
-      "noResidents": "Sakin yoxdur.",
-      "addResident": "Sakin əlavə et",
-      "editResident": "Sakini redaktə et",
+      "noResidents": "Tələbə yoxdur.",
+      "addResident": "Tələbə əlavə et",
+      "editResident": "Tələbəni redaktə et",
       "fullName": "Ad Soyad",
       "phone": "Telefon",
       "unit": "Mənzil / ofis",
@@ -1190,7 +1190,7 @@
     "system": "SİSTEM",
     "devices": "Cihazlar",
     "access": "GİRİŞ",
-    "peopleAndResidents": "Sakinlər və işçilər"
+    "peopleAndResidents": "Tələbələr və işçilər"
   },
   "topBar": {
     "searchPages": "Səhifələri axtar...",
@@ -1222,13 +1222,13 @@
       "systemStatus": "sistem statusu cihazlar loglar sağlamlıq",
       "parkingManagement": "parklanma idarəetmə yerlər zonalar",
       "parkingVehicles": "ağ siyahı nəqliyyat avtomobil nömrə",
-      "parkingHolders": "yer sahibləri sakinlər abonentlər",
+      "parkingHolders": "yer sahibləri tələbələr abonentlər",
       "parkingBlacklist": "qara siyahı bloklanmış nəqliyyat",
       "parkingPos": "pos kassa ödəniş hesablaşma",
       "parkingTariffs": "tariflər qiymətlər saatlıq abunə",
       "parkingHistory": "tarixçə giriş çıxış jurnal hadisələr",
       "parkingReports": "hesabatlar statistika parklanma gəlir",
-      "residents": "sakinlər mənzil blok korpus ev"
+      "residents": "tələbələr fakültə universitet yataqxana otaq"
     }
   },
   "auth": {
@@ -1567,7 +1567,7 @@
       "saveFailed": "Yadda saxlanılmadı",
       "importFailed": "İdxal alınmadı",
       "firstNameRequired": "Əvvəlcə adı daxil edin.",
-      "loadResidents": "Sakinlər yüklənə bilmədi"
+      "loadResidents": "Tələbələr yüklənə bilmədi"
     },
     "createPageHint": "Məlumatları doldurun, şəkil və biometriyanı əlavə edin.",
     "finish": "Bitir",
@@ -1579,9 +1579,12 @@
       "source": {
         "file": "Fayl",
         "webcam": "Kamera",
-        "device": "Terminal"
+        "device": "Cihaz"
       },
-      "selectDevice": "Terminal seçin",
+      "device": "Cihaz",
+      "selectDevice": "Cihaz seçin",
+      "fingerprintDevice": "Barmaq izinin qeydi üçün cihaz",
+      "cardDevice": "Kartın oxunması üçün cihaz",
       "selectDeviceHint": "Cihazdan tutma üçün əvvəlcə terminal və ya qeydiyyat stansiyası seçin.",
       "addFace": "Üz əlavə et",
       "dataTitle": "Biometrik məlumatlar",
@@ -1598,20 +1601,20 @@
       "enrollers": "Qeydiyyat stansiyaları",
       "readCardFromDevice": "Kartı cihazdan oxu"
     },
-    "titleHousing": "Sakinlərin və işçilərin idarə edilməsi",
-    "descriptionHousing": "Sakinləri, MTK işçilərini, qonaqları və onların etimadnamələrini idarə edin.",
-    "residents": "Sakinlər",
-    "searchResidents": "Sakin axtarışı...",
-    "addResident": "Sakin əlavə et",
+    "titleHousing": "Tələbələrin və işçilərin idarə edilməsi",
+    "descriptionHousing": "Tələbələri, ADAU işçilərini, qonaqları və onların etimadnamələrini idarə edin.",
+    "residents": "Tələbələr",
+    "searchResidents": "Tələbə axtarışı...",
+    "addResident": "Tələbə əlavə et",
     "personKind": "Qeydin növü",
     "kindEmployee": "İşçi",
-    "kindResident": "Sakin",
+    "kindResident": "Tələbə",
     "kindVisitor": "Qonaq",
-    "apartment": "Mənzil",
-    "block": "Blok / korpus",
+    "apartment": "Yataqxana otağı",
+    "block": "Fakültə",
     "apartmentPlaceholder": "Məs. 42",
-    "apartmentShort": "mən. {{value}}",
-    "noHousingBlocks": "Struktur boşdur — parametrlərdə blok əlavə edin."
+    "apartmentShort": "otaq {{value}}",
+    "noHousingBlocks": "Struktur boşdur — parametrlərdə fakültə əlavə edin."
   },
   "schedulePlanner": {
     "searchEmployees": "İşçi axtarışı…",
@@ -2400,6 +2403,7 @@
     "tabMonthly": "Aylıq",
     "tabTabel": "Tabel",
     "pickEmployeeTitle": "İşçi seçimi",
+    "kindSwitchLabel": "Kimi göstərmək: işçilər və ya tələbələr",
     "nightShiftHint": "Gecə növbəsi — bitmə növbəti günə keçir (+1 gün)",
     "deptSearchPlaceholder": "Şöbə axtar…",
     "empSearchPlaceholder": "İşçi axtar…",
@@ -2663,7 +2667,7 @@
       "roles": "Rollar",
       "debugLogs": "Debug jurnalları",
       "criteria": "Tabel qaydaları",
-      "housing": "MTK strukturu"
+      "housing": "Universitet strukturu"
     },
     "criteria": {
       "heading": "Tabel qaydaları / Davamiyyət kriteriyaları",
@@ -3024,27 +3028,27 @@
     "parkingPaidHint": "Dayanma tarifə görə ödənilir; tariflər, abunələr və kassa əlçatandır."
   },
   "housing": {
-    "subtitle": "Yaşayış kompleksi",
-    "structureTitle": "MTK strukturu",
-    "structureHint": "Kompleks → korpus → giriş → mərtəbə. Sakin kartında blok bu ağacdan seçilir.",
-    "addBlock": "Blok əlavə et",
-    "addChild": "Daxilinə blok əlavə et",
-    "editBlock": "Bloku redaktə et",
-    "deleteBlock": "Bloku sil",
-    "deleteConfirm": "«{{name}}» bloku silinsin?",
-    "deleteResidentsWarning": "Bu blokda {{count}} sakin var — onlar bloksuz qalacaq.",
-    "blockName": "Blokun adı",
-    "blockNamePlaceholder": "Məs. Korpus A",
+    "subtitle": "ADAU",
+    "structureTitle": "Universitet strukturu",
+    "structureHint": "Fakültələr və onların bölmələri. Tələbə kartında fakültə bu ağacdan seçilir.",
+    "addBlock": "Fakültə əlavə et",
+    "addChild": "Daxilinə bölmə əlavə et",
+    "editBlock": "Fakültəni redaktə et",
+    "deleteBlock": "Fakültəni sil",
+    "deleteConfirm": "«{{name}}» fakültəsi silinsin?",
+    "deleteResidentsWarning": "Bu fakültədə {{count}} tələbə var — onlar fakültəsiz qalacaq.",
+    "blockName": "Fakültənin adı",
+    "blockNamePlaceholder": "Məs. Aqronomiya fakültəsi",
     "blockDescription": "Təsvir",
-    "parentBlock": "Yuxarı blok",
+    "parentBlock": "Yuxarı fakültə",
     "parentLabel": "Daxilində: {{name}}",
     "noParent": "Kökdə",
-    "residentsInBlock": "Blokdakı sakinlər",
-    "empty": "Struktur hələ boşdur — ilk bloku əlavə edin.",
+    "residentsInBlock": "Fakültədəki tələbələr",
+    "empty": "Struktur hələ boşdur — ilk fakültəni əlavə edin.",
     "errors": {
       "load": "Struktur yüklənə bilmədi",
-      "save": "Blok yadda saxlanıla bilmədi",
-      "delete": "Blok silinə bilmədi"
+      "save": "Fakültə yadda saxlanıla bilmədi",
+      "delete": "Fakültə silinə bilmədi"
     }
   },
   "authRecords": {
@@ -3059,22 +3063,22 @@
     "colDevice": "Cihaz",
     "colTime": "Vaxt",
     "pickPersonTitle": "Şəxs seçimi",
-    "allResidents": "Bütün sakinlər",
-    "allBlocks": "Bütün bloklar",
-    "wholeBlock": "bütün blok",
-    "selectWholeBlock": "Bütün bloku seç ({{count}})",
-    "unselectWholeBlock": "Blok seçimini ləğv et",
+    "allResidents": "Bütün tələbələr",
+    "allBlocks": "Bütün fakültələr",
+    "wholeBlock": "bütün fakültə",
+    "selectWholeBlock": "Bütün fakültəni seç ({{count}})",
+    "unselectWholeBlock": "Fakültə seçimini ləğv et",
     "multiDeptHint": "Bir neçə şöbə seçmək üçün qeyd qutularını işarələyin; ada klikləyəndə həmin şöbənin işçiləri göstərilir.",
-    "multiBlockHint": "Bir neçə blok seçmək üçün qeyd qutularını işarələyin; ada klikləyəndə həmin blokun sakinləri göstərilir.",
+    "multiBlockHint": "Bir neçə fakültə seçmək üçün qeyd qutularını işarələyin; ada klikləyəndə həmin fakültənin tələbələri göstərilir.",
     "selectedCount": "{{count}} seçilib",
     "noDeptsSelected": "Şöbə seçilməyib — bütün işçilər",
-    "noBlocksSelected": "Blok seçilməyib — bütün sakinlər",
+    "noBlocksSelected": "Fakültə seçilməyib — bütün tələbələr",
     "clearSelection": "Seçimi təmizlə",
     "removeFromSelection": "{{name}} seçimdən çıxarılsın",
-    "blockSearchPlaceholder": "Blok axtar…",
-    "residentSearchPlaceholder": "Sakin axtar…",
-    "noResidentsInBlock": "Bu blokda sakin yoxdur.",
-    "apartmentShort": "mənzil"
+    "blockSearchPlaceholder": "Fakültə axtar…",
+    "residentSearchPlaceholder": "Tələbə axtar…",
+    "noResidentsInBlock": "Bu fakültədə tələbə yoxdur.",
+    "apartmentShort": "otaq"
   },
   "visitorPass": {
     "ticketTitle": "Qonaq buraxılışı",

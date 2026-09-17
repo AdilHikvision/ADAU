@@ -1,41 +1,49 @@
+import { useTranslation } from 'react-i18next';
+
+/** Логотип ADAU для каждой локализации; незнакомый язык — английский вариант. */
+const LOGO_BY_LANG: Record<string, string> = {
+    az: '/logos/logo_az.png',
+    en: '/logos/logo_en.png',
+    ru: '/logos/logo_ru.png',
+};
+
+/** Пропорция исходников (1000×~333) — нужна, чтобы зарезервировать ширину до загрузки. */
+const ASPECT = 1000 / 333;
+
 interface LogoProps {
-    /** Rendered square size in px. */
+    /** Высота знака в px. Ширина считается по пропорции — логотип широкий, примерно 3:1. */
     size?: number;
     className?: string;
+    /**
+     * Тёмная подложка. Файлы логотипа белые, поэтому на светлых поверхностях
+     * (карточка входа, мобильный топбар) он без подложки не виден. В боковом
+     * меню фон уже тёмный — там передаём plate={false}.
+     */
+    plate?: boolean;
 }
 
 /**
- * Brand mark — violet gradient tile with a shield-and-keyhole glyph.
- * Single source of truth for the app logo (sidebar, login, mobile bar).
+ * Brand mark — логотип ADAU, свой для az/en/ru.
+ * Единственный источник логотипа в приложении (сайдбар, вход, мобильная панель).
  */
-export function Logo({ size = 40, className = '' }: LogoProps) {
+export function Logo({ size = 40, className = '', plate = true }: LogoProps) {
+    const { i18n } = useTranslation();
+    const lang = (i18n.language || 'en').slice(0, 2).toLowerCase();
+    const src = LOGO_BY_LANG[lang] ?? LOGO_BY_LANG.en;
+
     return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 48 48"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            className={`shrink-0 ${className}`}
-            aria-hidden="true"
+        <span
+            className={`inline-flex shrink-0 items-center justify-center ${plate ? 'rounded-xl bg-sidebar px-2.5 py-1.5' : ''} ${className}`}
         >
-            <defs>
-                <linearGradient id="px-logo-g" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
-                    <stop offset="0" stopColor="#8e77e8" />
-                    <stop offset="0.55" stopColor="#6e56cf" />
-                    <stop offset="1" stopColor="#5a44b8" />
-                </linearGradient>
-            </defs>
-            <rect x="2" y="2" width="44" height="44" rx="13" fill="url(#px-logo-g)" />
-            <path
-                d="M24 8.5l11.5 4.2v9.1c0 7.4-4.85 12.9-11.5 14.7-6.65-1.8-11.5-7.3-11.5-14.7v-9.1L24 8.5z"
-                fill="rgba(255,255,255,0.14)"
+            <img
+                src={src}
+                alt="ADAU"
+                width={Math.round(size * ASPECT)}
+                height={size}
+                style={{ height: size, width: 'auto' }}
+                className="block max-w-full select-none"
+                draggable={false}
             />
-            <circle cx="24" cy="20.5" r="4.4" fill="#fff" />
-            <path
-                d="M22.1 23.6h3.8l1.5 7.6a1.7 1.7 0 0 1-1.67 2H22.27a1.7 1.7 0 0 1-1.67-2l1.5-7.6z"
-                fill="#fff"
-            />
-        </svg>
+        </span>
     );
 }

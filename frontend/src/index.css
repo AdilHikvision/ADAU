@@ -26,6 +26,16 @@
   /* ── Tinted fills ── */
   --color-slate-75: #f3f1f9;
 
+  /* ── Sidebar (тёмно-серый) ──
+     Логотип ADAU поставляется белым на прозрачном фоне, поэтому боковое меню
+     тёмное: на светлой подложке белый логотип был бы не виден. */
+  --color-sidebar: #423e4d;
+  --color-sidebar-hover: #4f4a5b;
+  --color-sidebar-border: #534f60;
+  --color-sidebar-text: #f1f0f7;
+  /* Приглушённый текст подтянут вслед за фоном: контраст остаётся ≥ 4.5:1. */
+  --color-sidebar-muted: #b3aec0;
+
   /* ── Ink ── */
   --color-text-dark: #16131f;
   --color-text-base: #3a3547;

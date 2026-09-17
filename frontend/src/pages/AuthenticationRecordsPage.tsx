@@ -492,7 +492,7 @@ export function AuthenticationRecordsPage() {
                           >
                             <span className="flex items-center gap-2">
                               <span className="material-symbols-outlined text-base shrink-0">
-                                {checked ? 'check_circle' : (residents ? 'apartment' : 'groups')}
+                                {checked ? 'check_circle' : (residents ? 'school' : 'groups')}
                               </span>
                               <span className="truncate">
                                 {checked ? t(offLabel) : t(onLabel, { count: groupCount })}

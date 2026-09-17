@@ -90,7 +90,7 @@
     "workforce": "Aktiv Şirkət",
     "gym": "Gym Management",
     "parking": "Parking Management",
-    "housing": "Aktiv MTK",
+    "housing": "ADAU",
     "workforceSubtitle": "Attendance Management"
   },
   "parking": {
@@ -102,7 +102,7 @@
     "deleteCascade": "All nested items will be removed.",
     "nav": {
       "management": "Parking management",
-      "residents": "Residents & vehicles",
+      "residents": "Students & vehicles",
       "reports": "Reports",
       "tariffs": "Tariffs",
       "history": "History",
@@ -212,7 +212,7 @@
       "homeTitle": "Aktiv Parking — Home",
       "homeDesc": "Parking module overview",
       "tiles": {
-        "residents": "Residents",
+        "residents": "Students",
         "vehicles": "Vehicles",
         "activePermits": "Active in whitelist",
         "expiringSoon": "Expiring in 7d",
@@ -228,15 +228,15 @@
       "entered": "Entered",
       "exited": "Exited",
       "inside": "Inside",
-      "residentsTitle": "Residents & vehicles",
-      "residentsDesc": "Residents, their vehicles and permit status",
-      "searchResident": "Search resident…",
-      "allResidents": "All residents",
+      "residentsTitle": "Students & vehicles",
+      "residentsDesc": "Students, their vehicles and permit status",
+      "searchResident": "Search student…",
+      "allResidents": "All students",
       "unitShort": "Unit",
       "vehiclesCount": "Vehicles: {{count}}",
-      "noResidents": "No residents.",
-      "addResident": "Add resident",
-      "editResident": "Edit resident",
+      "noResidents": "No students.",
+      "addResident": "Add student",
+      "editResident": "Edit student",
       "fullName": "Full name",
       "phone": "Phone",
       "unit": "Unit / office",
@@ -1190,7 +1190,7 @@
     "system": "SYSTEM",
     "devices": "Devices",
     "access": "ACCESS",
-    "peopleAndResidents": "Residents & staff"
+    "peopleAndResidents": "Students & staff"
   },
   "topBar": {
     "searchPages": "Search pages...",
@@ -1222,13 +1222,13 @@
       "systemStatus": "system status devices logs health",
       "parkingManagement": "parking management spaces zones lots",
       "parkingVehicles": "whitelist vehicles cars plates",
-      "parkingHolders": "space holders residents subscribers",
+      "parkingHolders": "space holders students subscribers",
       "parkingBlacklist": "blacklist blocked vehicles banned",
       "parkingPos": "pos checkout cashier payment",
       "parkingTariffs": "tariffs prices rates hourly subscription",
       "parkingHistory": "history entries exits log events",
       "parkingReports": "reports statistics parking revenue",
-      "residents": "residents tenants apartment flat block building"
+      "residents": "students faculty university dormitory room"
     }
   },
   "auth": {
@@ -1567,7 +1567,7 @@
       "saveFailed": "Save failed",
       "importFailed": "Import failed",
       "firstNameRequired": "Enter the first name first.",
-      "loadResidents": "Failed to load residents"
+      "loadResidents": "Failed to load students"
     },
     "createPageHint": "Fill in the details, add a photo and biometrics.",
     "finish": "Finish",
@@ -1579,9 +1579,12 @@
       "source": {
         "file": "File",
         "webcam": "Camera",
-        "device": "Terminal"
+        "device": "Device"
       },
-      "selectDevice": "Select terminal",
+      "device": "Device",
+      "selectDevice": "Select device",
+      "fingerprintDevice": "Device to enrol fingerprint",
+      "cardDevice": "Device to read card",
       "selectDeviceHint": "Pick a terminal or enrollment station first to capture from a device.",
       "addFace": "Add face",
       "dataTitle": "Biometric data",
@@ -1598,20 +1601,20 @@
       "enrollers": "Enrollment stations",
       "readCardFromDevice": "Read card from device"
     },
-    "titleHousing": "Residents & staff",
-    "descriptionHousing": "Manage residents, building staff, visitors, and their security credentials.",
-    "residents": "Residents",
-    "searchResidents": "Search residents...",
-    "addResident": "Add resident",
+    "titleHousing": "Students & staff",
+    "descriptionHousing": "Manage students, campus staff, visitors, and their security credentials.",
+    "residents": "Students",
+    "searchResidents": "Search students...",
+    "addResident": "Add student",
     "personKind": "Record type",
     "kindEmployee": "Employee",
-    "kindResident": "Resident",
+    "kindResident": "Student",
     "kindVisitor": "Visitor",
-    "apartment": "Apartment",
-    "block": "Block / building",
+    "apartment": "Dormitory room",
+    "block": "Faculty",
     "apartmentPlaceholder": "e.g. 42",
-    "apartmentShort": "apt. {{value}}",
-    "noHousingBlocks": "The structure is empty — add blocks in settings."
+    "apartmentShort": "room {{value}}",
+    "noHousingBlocks": "The structure is empty — add faculties in settings."
   },
   "schedulePlanner": {
     "searchEmployees": "Search employees…",
@@ -2400,6 +2403,7 @@
     "tabMonthly": "Monthly",
     "tabTabel": "Timesheet",
     "pickEmployeeTitle": "Select employee",
+    "kindSwitchLabel": "Show: staff or students",
     "nightShiftHint": "Night shift — ends on the next day (+1 day)",
     "deptSearchPlaceholder": "Search department…",
     "empSearchPlaceholder": "Search employee…",
@@ -2671,7 +2675,7 @@
       "roles": "Roles",
       "debugLogs": "Debug Logs",
       "criteria": "Timesheet rules",
-      "housing": "Housing structure"
+      "housing": "University structure"
     },
     "criteria": {
       "heading": "Timesheet rules / Attendance criteria",
@@ -3032,27 +3036,27 @@
     "parkingPaidHint": "Parking is charged; tariffs, subscriptions and the POS are available."
   },
   "housing": {
-    "subtitle": "Residential complex",
-    "structureTitle": "Housing structure",
-    "structureHint": "Complex → building → entrance → floor. A resident’s block is picked from this tree.",
-    "addBlock": "Add block",
-    "addChild": "Add a nested block",
-    "editBlock": "Edit block",
-    "deleteBlock": "Delete block",
-    "deleteConfirm": "Delete the block “{{name}}”?",
-    "deleteResidentsWarning": "This block has {{count}} resident(s) — they will be left without a block.",
-    "blockName": "Block name",
-    "blockNamePlaceholder": "e.g. Building A",
+    "subtitle": "ADAU",
+    "structureTitle": "University structure",
+    "structureHint": "Faculties and their sub-units. A student’s faculty is picked from this tree.",
+    "addBlock": "Add faculty",
+    "addChild": "Add a sub-unit",
+    "editBlock": "Edit faculty",
+    "deleteBlock": "Delete faculty",
+    "deleteConfirm": "Delete the faculty “{{name}}”?",
+    "deleteResidentsWarning": "This faculty has {{count}} student(s) — they will be left without a faculty.",
+    "blockName": "Faculty name",
+    "blockNamePlaceholder": "e.g. Faculty of Agronomy",
     "blockDescription": "Description",
-    "parentBlock": "Parent block",
+    "parentBlock": "Parent faculty",
     "parentLabel": "Inside: {{name}}",
     "noParent": "At the root",
-    "residentsInBlock": "Residents in this block",
-    "empty": "The structure is empty — add the first block.",
+    "residentsInBlock": "Students in this faculty",
+    "empty": "The structure is empty — add the first faculty.",
     "errors": {
-      "load": "Failed to load the housing structure",
-      "save": "Failed to save the block",
-      "delete": "Failed to delete the block"
+      "load": "Failed to load the university structure",
+      "save": "Failed to save the faculty",
+      "delete": "Failed to delete the faculty"
     }
   },
   "authRecords": {
@@ -3068,22 +3072,22 @@
     "colDevice": "Device",
     "colTime": "Time",
     "pickPersonTitle": "Select person",
-    "allResidents": "All residents",
-    "allBlocks": "All blocks",
-    "wholeBlock": "whole block",
-    "selectWholeBlock": "Select whole block ({{count}})",
-    "unselectWholeBlock": "Unselect this block",
+    "allResidents": "All students",
+    "allBlocks": "All faculties",
+    "wholeBlock": "whole faculty",
+    "selectWholeBlock": "Select whole faculty ({{count}})",
+    "unselectWholeBlock": "Unselect this faculty",
     "multiDeptHint": "Tick the checkboxes to select several departments; click a name to list its employees.",
-    "multiBlockHint": "Tick the checkboxes to select several blocks; click a name to list its residents.",
+    "multiBlockHint": "Tick the checkboxes to select several faculties; click a name to list its students.",
     "selectedCount": "{{count}} selected",
     "noDeptsSelected": "No departments selected — all employees",
-    "noBlocksSelected": "No blocks selected — all residents",
+    "noBlocksSelected": "No faculties selected — all students",
     "clearSelection": "Clear selection",
     "removeFromSelection": "Remove {{name}} from selection",
-    "blockSearchPlaceholder": "Search block…",
-    "residentSearchPlaceholder": "Search resident…",
-    "noResidentsInBlock": "No residents in this block.",
-    "apartmentShort": "apt."
+    "blockSearchPlaceholder": "Search faculty…",
+    "residentSearchPlaceholder": "Search student…",
+    "noResidentsInBlock": "No students in this faculty.",
+    "apartmentShort": "room"
   },
   "visitorPass": {
     "ticketTitle": "Visitor pass",

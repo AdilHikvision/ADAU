@@ -29,7 +29,7 @@ const PRIMARY_NAV: NavConfig[] = [
     { to: '/people', icon: 'group', labelKey: 'nav.people', housingLabelKey: 'nav.peopleAndResidents', anyOf: ['Employees.View', 'Visitors.View'], modules: ['workforce', 'housing'] },
     { to: '/monitoring', icon: 'monitor_heart', labelKey: 'nav.monitoring', anyOf: ['Devices.View'], modules: ['workforce', 'housing'] },
     { to: '/access-levels', icon: 'admin_panel_settings', labelKey: 'nav.accessLevels', anyOf: ['AccessLevels.View'], modules: ['workforce', 'housing'] },
-    { to: '/work-hours', icon: 'schedule', labelKey: 'nav.workHours', anyOf: ['Attendance.View'], modules: ['workforce'] },
+    { to: '/work-hours', icon: 'schedule', labelKey: 'nav.workHours', anyOf: ['Attendance.View'], modules: ['workforce', 'housing'] },
     { to: '/authentication-records', icon: 'fingerprint', labelKey: 'nav.authRecords', anyOf: ['Attendance.View'], modules: ['workforce', 'housing'] },
     { to: '/schedule-planner', icon: 'calendar_month', labelKey: 'nav.schedulePlanner', anyOf: ['Schedules.View'], modules: ['workforce'] },
     { to: '/approvals', icon: 'approval', labelKey: 'nav.approvals', anyOf: ['Attendance.Manage', 'Leaves.Manage'], modules: ['workforce'] },
@@ -94,10 +94,11 @@ export function Sidebar() {
     const system = SYSTEM_NAV.filter(isAllowed);
 
     return (
-        <aside className="hidden md:flex flex-col w-[264px] bg-surface border-r border-border-light py-6 shrink-0 h-full">
-            <div className="px-5 mb-7 flex items-center gap-3">
+        <aside className="hidden md:flex flex-col w-[264px] bg-sidebar border-r border-sidebar-border py-6 shrink-0 h-full">
+            {/* Шапка. Фон меню тёмный, поэтому логотип идёт без подложки. */}
+            <div className="px-5 mb-7">
                 {activeModule === 'parking' ? (
-                    <>
+                    <div className="flex items-center gap-3">
                         <span
                             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white text-xl font-extrabold"
                             style={{ background: '#6C5CE7' }}
@@ -105,27 +106,13 @@ export function Sidebar() {
                             P
                         </span>
                         <div>
-                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">Aktiv Parking</h1>
+                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-sidebar-text">Aktiv Parking</h1>
                         </div>
-                    </>
-                ) : isHousing ? (
-                    <>
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-teal-500 to-emerald-600 text-white">
-                            <span className="material-symbols-outlined text-[22px]">apartment</span>
-                        </span>
-                        <div>
-                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('modules.housing')}</h1>
-                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">{t('housing.subtitle')}</p>
-                        </div>
-                    </>
+                    </div>
                 ) : (
-                    <>
-                        <Logo size={40} />
-                        <div>
-                            <h1 className="text-[15px] font-extrabold leading-tight tracking-tight text-text-dark">{t('modules.workforce')}</h1>
-                            <p className="text-[11px] font-medium leading-tight text-text-light mt-0.5">{t('modules.workforceSubtitle')}</p>
-                        </div>
-                    </>
+                    // Только логотип: в нём уже есть название (ADAU и полное имя университета),
+                    // подпись модуля под ним дублировала бы его.
+                    <Logo size={48} plate={false} />
                 )}
             </div>
 
@@ -135,16 +122,16 @@ export function Sidebar() {
                 type="button"
                 onClick={openPicker}
                 title={t('modules.switch')}
-                className="group mx-3 mb-5 flex items-center gap-3 rounded-2xl border border-border-base bg-slate-75/60 p-2.5 text-left transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-card"
+                className="group mx-3 mb-5 flex items-center gap-3 rounded-2xl border border-sidebar-border bg-sidebar-hover/60 p-2.5 text-left transition-all hover:border-primary/50 hover:bg-primary/15"
             >
                 <span className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-linear-to-br ${module.gradient} text-white shadow-inner-soft`}>
                     <img src={module.image} alt="" className="h-full w-full object-cover" />
                 </span>
                 <span className="min-w-0 flex-1">
-                    <span className="block text-[9px] font-extrabold uppercase tracking-[0.16em] text-text-light">{t('modules.label')}</span>
-                    <span className="block truncate text-sm font-bold text-text-dark">{t(module.nameKey)}</span>
+                    <span className="block text-[9px] font-extrabold uppercase tracking-[0.16em] text-sidebar-muted">{t('modules.label')}</span>
+                    <span className="block truncate text-sm font-bold text-sidebar-text">{t(module.nameKey)}</span>
                 </span>
-                <span className="material-symbols-outlined shrink-0 text-lg text-text-light transition-colors group-hover:text-primary">unfold_more</span>
+                <span className="material-symbols-outlined shrink-0 text-lg text-sidebar-muted transition-colors group-hover:text-primary-light">unfold_more</span>
             </button>
             )}
 
@@ -155,8 +142,8 @@ export function Sidebar() {
             </nav>
 
             {system.length > 0 && (
-                <div className="px-3 pt-4 mt-2 mb-2 border-t border-border-light">
-                    <p className="px-3 text-[9px] font-extrabold text-text-light tracking-[0.18em] uppercase mb-2">{t('nav.system')}</p>
+                <div className="px-3 pt-4 mt-2 mb-2 border-t border-sidebar-border">
+                    <p className="px-3 text-[9px] font-extrabold text-sidebar-muted tracking-[0.18em] uppercase mb-2">{t('nav.system')}</p>
                     <nav className="space-y-1">
                         {system.map(item => (
                             <NavItem key={item.to} to={item.to} icon={item.icon} label={navLabel(item)} />
@@ -165,7 +152,7 @@ export function Sidebar() {
                 </div>
             )}
 
-            <div className="px-6 pt-2 text-[10px] font-bold uppercase tracking-[0.14em] text-text-light/60">
+            <div className="px-6 pt-2 text-[10px] font-bold uppercase tracking-[0.14em] text-sidebar-muted/70">
                 v{__APP_VERSION__}
             </div>
 

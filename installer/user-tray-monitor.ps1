@@ -21,7 +21,7 @@ function Invoke-ElevatedServiceAction {
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
 $notifyIcon.Visible = $true
-$notifyIcon.Text = "ProjectX Server: initializing"
+$notifyIcon.Text = "ADAU Server: initializing"
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $openItem = $menu.Items.Add("Open Service Manager")
@@ -58,8 +58,8 @@ $notifyIcon.add_MouseClick({
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 4000
 $timer.add_Tick({
-    $notifyIcon.Text = "ProjectX Server: $(Get-ServiceStateSafe)"
+    $notifyIcon.Text = "ADAU Server: $(Get-ServiceStateSafe)"
 })
 $timer.Start()
-$notifyIcon.Text = "ProjectX Server: $(Get-ServiceStateSafe)"
+$notifyIcon.Text = "ADAU Server: $(Get-ServiceStateSafe)"
 [System.Windows.Forms.Application]::Run()
