@@ -4270,7 +4270,9 @@ app.MapGet("/api/authentication-records", async (
     string? date,
     Guid? employeeId,
     Guid? departmentId,
+    string? departmentIds,
     Guid? housingBlockId,
+    string? housingBlockIds,
     string? kind,
     AppDbContext dbContext,
     CancellationToken cancellationToken) =>
@@ -4291,10 +4293,10 @@ app.MapGet("/api/authentication-records", async (
         _ => peopleQuery.Where(e => e.Kind == PersonKind.Employee),
     };
     if (employeeId.HasValue) peopleQuery = peopleQuery.Where(e => e.Id == employeeId.Value);
-    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, cancellationToken);
     if (deptScope is not null)
         peopleQuery = peopleQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
-    var housingScope = await BuildHousingScopeAsync(housingBlockId, dbContext, cancellationToken);
+    var housingScope = await BuildHousingScopeAsync(ParseIdList(housingBlockId, housingBlockIds), dbContext, cancellationToken);
     if (housingScope is not null)
         peopleQuery = peopleQuery.Where(e => e.HousingBlockId != null && housingScope.Contains(e.HousingBlockId.Value));
 
@@ -4351,7 +4353,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Gui
         .Include(e => e.DayPatterns.Where(dp => dp.Date == dayDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, cancellationToken);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, cancellationToken);
     if (deptScope is not null)
         employeesQuery = employeesQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
@@ -4483,7 +4485,7 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) employeesQuery = employeesQuery.Where(e => e.Id == employeeId.Value);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, cancellationToken);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, cancellationToken);
     if (deptScope is not null)
         employeesQuery = employeesQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await employeesQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(cancellationToken);
@@ -4737,7 +4739,7 @@ app.MapGet("/api/reports/work-hours/monthly", async (string? month, Guid? employ
 {
     var (y, mo) = ParseTabelMonth(month);
     // Каждый выбранный отдел разворачиваем в поддерево — как в остальных отчётах.
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, cancellationToken);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, cancellationToken);
     var tabelRows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, cancellationToken, employeeId, deptScope);
 
     IEnumerable<MonthlyTabelRow> filtered = tabelRows;
@@ -4782,7 +4784,7 @@ app.MapGet("/api/reports/work-hours/monthly", async (string? month, Guid? employ
 app.MapGet("/api/reports/work-hours/monthly/excel", async (string? month, Guid? employeeId, Guid? departmentId, string? departmentIds, AppDbContext dbContext, CancellationToken ct) =>
 {
     var (y, mo) = ParseTabelMonth(month);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, ct);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, ct);
     var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, employeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var bytes = ExcelReportBuilder.BuildMonthlyTabel(rows, y, mo, crit);
@@ -4792,7 +4794,7 @@ app.MapGet("/api/reports/work-hours/monthly/excel", async (string? month, Guid? 
 app.MapGet("/api/reports/work-hours/monthly/pdf", async (string? month, Guid? employeeId, Guid? departmentId, string? departmentIds, AppDbContext dbContext, CancellationToken ct) =>
 {
     var (y, mo) = ParseTabelMonth(month);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, ct);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, ct);
     var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, employeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var bytes = PdfReportBuilder.BuildMonthlyTabel(rows, y, mo, crit);
@@ -4809,7 +4811,7 @@ app.MapPost("/api/reports/work-hours/monthly/send-email", async (
         return Results.BadRequest(new { message = "Recipient email is required." });
 
     var (y, mo) = ParseTabelMonth(request.Month);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(request.DepartmentId, request.DepartmentIds), dbContext, ct);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(request.DepartmentId, request.DepartmentIds), dbContext, ct);
     var rows = await BuildMonthlyTabelRowsAsync(y, mo, dbContext, ct, request.EmployeeId, deptScope);
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var companyName = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", ct))?.Value ?? "ProjectX";
@@ -5388,15 +5390,30 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
 
 // ─── Report Exports ────────────────────────────────────────────────────────────
 
-// Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
-/// <summary>Блок ЖКХ вместе со всеми вложенными: выбрав корпус, видим и его подъезды.</summary>
-static async Task<HashSet<Guid>?> BuildHousingScopeAsync(Guid? housingBlockId, AppDbContext dbContext, CancellationToken ct)
+// «id1,id2,id3» из query-строки → список Guid. Используется фильтрами с мультивыбором
+// (отделы, блоки ЖКХ). Старый одиночный параметр продолжает работать: оба источника
+// объединяются, дубликаты отбрасываются, мусор молча игнорируется.
+static List<Guid> ParseIdList(Guid? single, string? csv)
 {
-    if (housingBlockId is null) return null;
+    var ids = new List<Guid>();
+    if (single.HasValue) ids.Add(single.Value);
+    if (!string.IsNullOrWhiteSpace(csv))
+        foreach (var part in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (Guid.TryParse(part, out var parsed) && !ids.Contains(parsed))
+                ids.Add(parsed);
+    return ids;
+}
+
+// Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
+/// <summary>Блоки ЖКХ вместе со всеми вложенными: выбрав корпус, видим и его подъезды.
+/// Пустой список = фильтра нет.</summary>
+static async Task<HashSet<Guid>?> BuildHousingScopeAsync(IReadOnlyCollection<Guid> housingBlockIds, AppDbContext dbContext, CancellationToken ct)
+{
+    if (housingBlockIds.Count == 0) return null;
     var all = await dbContext.HousingBlocks.AsNoTracking()
         .Select(b => new { b.Id, b.ParentId })
         .ToListAsync(ct);
-    var scope = new HashSet<Guid> { housingBlockId.Value };
+    var scope = new HashSet<Guid>(housingBlockIds);
     var grew = true;
     while (grew)
     {
@@ -5406,19 +5423,6 @@ static async Task<HashSet<Guid>?> BuildHousingScopeAsync(Guid? housingBlockId, A
                 grew = true;
     }
     return scope;
-}
-
-// departmentIds — список id через запятую (мультивыбор отделов в отчётах).
-// Старый одиночный departmentId продолжает работать: оба источника объединяются.
-static List<Guid> ParseDepartmentIds(Guid? departmentId, string? departmentIds)
-{
-    var ids = new List<Guid>();
-    if (departmentId.HasValue) ids.Add(departmentId.Value);
-    if (!string.IsNullOrWhiteSpace(departmentIds))
-        foreach (var part in departmentIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            if (Guid.TryParse(part, out var parsed) && !ids.Contains(parsed))
-                ids.Add(parsed);
-    return ids;
 }
 
 static async Task<HashSet<Guid>?> BuildDepartmentScopeAsync(Guid? departmentId, AppDbContext dbContext, CancellationToken ct)
@@ -5459,7 +5463,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
         .Include(e => e.DayPatterns.Where(dp => dp.Date >= fromDate && dp.Date <= toDate)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
         .Where(e => e.Kind == PersonKind.Employee && e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
     if (employeeId.HasValue) empQuery = empQuery.Where(e => e.Id == employeeId.Value);
-    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseDepartmentIds(departmentId, departmentIds), dbContext, ct);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, ct);
     if (deptScope is not null)
         empQuery = empQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
     var employees = await empQuery.OrderBy(e => e.FirstName).ThenBy(e => e.LastName).ToListAsync(ct);
