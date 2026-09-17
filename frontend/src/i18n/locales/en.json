@@ -1697,6 +1697,9 @@
     "requestSubmittedForReview": "Request submitted for review.",
     "checkInTimeLabel": "Check-in time (HH:MM)",
     "checkOutTimeLabel": "Check-out time (HH:MM)",
+    "permissionFromTime": "From (HH:MM)",
+    "permissionToTime": "To (HH:MM)",
+    "permissionEndBeforeStart": "End time must be after the start time.",
     "startDateTime": "Start date & time",
     "dateTime": "Date & time",
     "endDateTime": "End date & time",
@@ -1743,6 +1746,7 @@
       "CheckIn": "Check-in correction",
       "CheckOut": "Check-out correction",
       "Absence": "Absence",
+      "HourlyAbsence": "Time off (hours)",
       "Vacation": "Vacation",
       "Overtime": "Overtime"
     },
@@ -1937,6 +1941,13 @@
       "testSkipped": "No relay configured: the server does not control the barrier",
       "testFailed": "Failed to trigger the relay",
       "testOkGate": "Barrier opened via the camera native command"
+    },
+    "attendanceDirection": {
+      "label": "Attendance direction",
+      "both": "Entry and exit",
+      "in": "Entry only",
+      "out": "Exit only",
+      "hint": "With «Entry and exit» the day is taken from the first and last event, so a second pass in the morning looks like leaving. Split entry and exit across readers to avoid that."
     }
   },
   "devices": {
@@ -2278,7 +2289,7 @@
     "signInEmail": "Sign-in email",
     "signInEmailPlaceholder": "employee@company.com",
     "accountCreated": "Account created!",
-    "temporaryPassword": "Temporary password:",
+    "temporaryPassword": "Temporary password",
     "savePasswordHint": "Save this password — it will not be shown again.",
     "defaultWorkSchedule": "Default work schedule",
     "noSchedule": "— No schedule —",
@@ -2371,7 +2382,15 @@
       "cameraAccess": "Could not access the camera"
     },
     "employeeProfileHint": "Employee card: details, photo and biometrics.",
-    "visitorProfileHint": "Visitor card: details, photo and biometrics."
+    "visitorProfileHint": "Visitor card: details, photo and biometrics.",
+    "copyPassword": "Copy",
+    "passwordCopied": "Copied",
+    "credentialsEmailSent": "Credentials were emailed to {{email}}.",
+    "credentialsEmailFailed": "The email was not sent — pass the password to the employee yourself (Settings → Email).",
+    "createSelfService": "Create self-service",
+    "createSelfServiceHint": "Creates the account and shows the temporary password here (it is also emailed).",
+    "resetSelfServicePassword": "Reset password",
+    "resetSelfServiceHint": "Issues a new temporary password — the current one stops working."
   },
   "workHours": {
     "pageTitle": "Attendance report",
@@ -2609,7 +2628,28 @@
     "permissionFromTime": "From",
     "permissionToTime": "To",
     "permissionShowInReport": "Show in report",
-    "permissionDeductHint": "Absence hours will be deducted from total worked time. If unchecked, the permission is only recorded."
+    "permissionDeductHint": "Absence hours will be deducted from total worked time. If unchecked, the permission is only recorded.",
+    "columns": {
+      "button": "Columns",
+      "showAll": "Show all columns",
+      "hint": "Applies to the table and to the Excel, PDF and email reports. Some columns appear only in the exports.",
+      "names": {
+        "employee": "Employee",
+        "department": "Department",
+        "date": "Date",
+        "schedule": "Schedule",
+        "shift": "Shift",
+        "checkIn": "Check in",
+        "checkOut": "Check out",
+        "hours": "Hours",
+        "norm": "Norm",
+        "overtime": "Overtime",
+        "late": "Late",
+        "early": "Early leave",
+        "status": "Status",
+        "corrected": "Corrected"
+      }
+    }
   },
   "systemSettings": {
     "pageTitle": "System Settings",
@@ -2722,6 +2762,7 @@
       "enableDesc": "Send emails via your SMTP server",
       "host": "SMTP Host",
       "port": "Port",
+      "passwordSaved": "Saved — type a new password to replace it",
       "username": "Username",
       "fromAddress": "From Address",
       "fromName": "From Name",
@@ -2907,6 +2948,7 @@
     "enabled": "Enable assistant",
     "apiKey": "OpenRouter API key",
     "apiKeyHint": "Get a key at openrouter.ai/keys",
+    "apiKeySaved": "Saved — type a new key to replace it",
     "model": "Model",
     "baseUrl": "Base URL",
     "test": "Test connection",
@@ -3028,5 +3070,25 @@
     "residentSearchPlaceholder": "Search resident…",
     "noResidentsInBlock": "No residents in this block.",
     "apartmentShort": "apt."
+  },
+  "visitorPass": {
+    "ticketTitle": "Visitor pass",
+    "pass": "Guest pass",
+    "guest": "Guest",
+    "where": "Access",
+    "validFrom": "Valid from",
+    "validTo": "Valid until",
+    "document": "Document",
+    "scanHint": "Show this QR code at the entrance.",
+    "download": "Download pass",
+    "share": "Share pass",
+    "shareText": "{{name}} — guest pass, {{company}}",
+    "desktopHint": "The pass image has been downloaded. Open a chat and attach it.",
+    "failed": "Could not build the pass",
+    "via": {
+      "whatsapp": "WhatsApp",
+      "telegram": "Telegram",
+      "email": "Email"
+    }
   }
 }

@@ -414,6 +414,7 @@ app.MapPost("/api/auth/forgot-password", async (
     IEmailService emailService,
     IEmailTemplateService tplService,
     IHostEnvironment env,
+    ILoggerFactory loggerFactory,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.Email))
@@ -432,7 +433,17 @@ app.MapPost("/api/auth/forgot-password", async (
         ["{{companyName}}"] = "ProjectX"
     }, cancellationToken);
 
-    await emailService.SendAsync(user.Email!, subject, body, cancellationToken);
+    // Ответ анонимному вызывающему не меняем (иначе по нему можно перебирать существующие аккаунты),
+    // но сбой отправки обязан попасть в лог: иначе восстановление пароля «работает» только на словах.
+    try
+    {
+        await emailService.SendAsync(user.Email!, subject, body, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        loggerFactory.CreateLogger("Auth.ForgotPassword")
+            .LogError(ex, "Password reset email could not be sent to {Email}", user.Email);
+    }
 
     if (env.IsDevelopment())
         return Results.Ok(new { message = "Password reset token generated.", token });
@@ -1081,6 +1092,11 @@ app.MapPost("/api/devices", async (
         return Results.BadRequest(new { message = "Направление камеры должно быть Entry или Exit." });
     }
 
+    if (!TryParseAttendanceDirection(request.AttendanceDirection, out var attendanceDirection))
+    {
+        return Results.BadRequest(new { message = "Направление для табеля должно быть Both, In или Out." });
+    }
+
     var (valid, verifyMessage) = await DeviceCredentialVerifier.VerifyAsync(
         request.IpAddress,
         request.Port,
@@ -1103,6 +1119,7 @@ app.MapPost("/api/devices", async (
         DeviceType = request.DeviceType,
         Username = username,
         Password = password,
+        AttendanceDirection = attendanceDirection,
         // Направление, зона и реле шлагбаума имеют смысл только для ANPR-камеры парковки.
         ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? parkingDirection : null,
         ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null,
@@ -1158,6 +1175,11 @@ app.MapPut("/api/devices/{id:guid}", async (
         return Results.BadRequest(new { message = "Направление камеры должно быть Entry или Exit." });
     }
 
+    if (!TryParseAttendanceDirection(request.AttendanceDirection, out var attendanceDirection))
+    {
+        return Results.BadRequest(new { message = "Направление для табеля должно быть Both, In или Out." });
+    }
+
     var oldIdentifier = device.DeviceIdentifier;
     var sdkConnected = (await connectionManager.GetStatusAsync(oldIdentifier, cancellationToken)).Status == DeviceConnectivityStatus.Connected;
 
@@ -1169,6 +1191,7 @@ app.MapPut("/api/devices/{id:guid}", async (
     device.DeviceType = request.DeviceType;
     if (request.Username is not null) device.Username = string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username.Trim();
     if (request.Password is not null) device.Password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password;
+    device.AttendanceDirection = attendanceDirection;
     device.ParkingDirection = request.DeviceType == DeviceType.AnprCamera ? parkingDirection : null;
     device.ParkingZoneId = request.DeviceType == DeviceType.AnprCamera ? request.ParkingZoneId : null;
     device.BarrierOutput = request.DeviceType == DeviceType.AnprCamera ? NormalizeBarrierOutput(request.BarrierOutput) : null;
@@ -1846,26 +1869,53 @@ app.MapGet("/api/settings/smtp", async (AppDbContext dbContext, CancellationToke
         host = map.GetValueOrDefault("Smtp:Host", ""),
         port = int.TryParse(map.GetValueOrDefault("Smtp:Port"), out var p) ? p : 587,
         username = map.GetValueOrDefault("Smtp:Username", ""),
-        password = map.GetValueOrDefault("Smtp:Password", ""),
+        // Пароль наружу не отдаём — только признак, что он сохранён. Пустой password в PUT
+        // означает «оставить как есть», поэтому форма ничего не затирает (см. PUT ниже).
+        password = "",
+        hasPassword = !string.IsNullOrEmpty(map.GetValueOrDefault("Smtp:Password", "")),
         fromAddress = map.GetValueOrDefault("Smtp:FromAddress", ""),
         fromName = map.GetValueOrDefault("Smtp:FromName", ""),
-        enableSsl = !string.Equals(map.GetValueOrDefault("Smtp:EnableSsl", "true"), "false", StringComparison.OrdinalIgnoreCase)
+        // Разбор такой же, как в EmailService: включённым считается только "true" (ключ отсутствует → true).
+        enableSsl = string.Equals(map.GetValueOrDefault("Smtp:EnableSsl", "true"), "true", StringComparison.OrdinalIgnoreCase)
     });
 }).RequireAuthorization("Settings.Manage");
 
 app.MapPut("/api/settings/smtp", async (SmtpSettingsRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
+    // Пробелы по краям режем: хост с хвостовым пробелом даёт «сервер не найден» уже при отправке.
+    // Пароль не трогаем — в нём пробел может быть значащим.
+    var host = request.Host?.Trim() ?? "";
+    var fromAddress = request.FromAddress?.Trim() ?? "";
+    var fromName = request.FromName?.Trim() ?? "";
+    var username = request.Username?.Trim() ?? "";
+    var port = request.Port > 0 ? request.Port : 587;
+
+    if (port is < 1 or > 65535)
+        return Results.BadRequest(new { message = "Port must be between 1 and 65535." });
+    // Раньше «включено» можно было сохранить без хоста и адреса отправителя: в UI почта выглядела
+    // настроенной, а письма молча не уходили. Теперь такая комбинация не сохраняется.
+    if (request.Enabled)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return Results.BadRequest(new { message = "SMTP host is required when email sending is enabled." });
+        if (!System.Net.Mail.MailAddress.TryCreate(fromAddress, out _))
+            return Results.BadRequest(new { message = "A valid From address is required when email sending is enabled." });
+    }
+
     var updates = new Dictionary<string, string>
     {
         ["Smtp:Enabled"] = request.Enabled ? "true" : "false",
-        ["Smtp:Host"] = request.Host ?? "",
-        ["Smtp:Port"] = (request.Port > 0 ? request.Port : 587).ToString(),
-        ["Smtp:Username"] = request.Username ?? "",
-        ["Smtp:Password"] = request.Password ?? "",
-        ["Smtp:FromAddress"] = request.FromAddress ?? "",
-        ["Smtp:FromName"] = request.FromName ?? "",
+        ["Smtp:Host"] = host,
+        ["Smtp:Port"] = port.ToString(),
+        ["Smtp:Username"] = username,
+        ["Smtp:FromAddress"] = fromAddress,
+        ["Smtp:FromName"] = fromName,
         ["Smtp:EnableSsl"] = request.EnableSsl ? "true" : "false"
     };
+    // Пароль форма не получает (GET отдаёт пустую строку), поэтому null — «не менять».
+    // Пустая строка — осознанная очистка: сервер без аутентификации.
+    if (request.Password is not null)
+        updates["Smtp:Password"] = request.Password;
     foreach (var (key, value) in updates)
     {
         var setting = await dbContext.SystemSettings.FirstOrDefaultAsync(x => x.Key == key, cancellationToken);
@@ -1884,12 +1934,20 @@ app.MapPut("/api/settings/smtp", async (SmtpSettingsRequest request, AppDbContex
     return Results.Ok(new { message = "SMTP settings saved." });
 }).RequireAuthorization("Settings.Manage");
 
-app.MapPost("/api/settings/smtp/test", async (SmtpTestRequest request, IEmailService emailService, CancellationToken cancellationToken) =>
+app.MapPost("/api/settings/smtp/test", async (SmtpTestRequest request, AppDbContext dbContext, IEmailService emailService, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.To))
         return Results.BadRequest(new { message = "Recipient email is required." });
+    // Пароля в форме нет, пока его не изменили: null → берём сохранённый, иначе тест ушёл бы без аутентификации.
+    var password = request.Password;
+    if (password is null)
+    {
+        var stored = await dbContext.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Key == "Smtp:Password", cancellationToken);
+        password = stored?.Value ?? "";
+    }
     var result = await emailService.TestConnectionAsync(request.To, new SmtpTestOptions(
-        request.Enabled, request.Host, request.Port, request.Username, request.Password,
+        request.Enabled, request.Host, request.Port, request.Username, password,
         request.FromAddress, request.FromName, request.EnableSsl), cancellationToken);
     return result.Success
         ? Results.Ok(new { message = $"Test email sent to {request.To}." })
@@ -2512,6 +2570,12 @@ app.MapPut("/api/employees/{id:guid}", async (
 
     // Self-service account management
     string? selfServiceTempPassword = null;
+    // null — аккаунт не создавался; true/false — ушло ли письмо с доступом.
+    // Нужно интерфейсу: если письма нет, пароль придётся передать сотруднику вручную.
+    bool? selfServiceEmailSent = null;
+    // Причина отказа SMTP. Логи сервиса пишутся только в консоль и на сервере теряются,
+    // поэтому текст ошибки отдаём администратору в ответе — иначе «письмо не пришло» не диагностируется.
+    string? selfServiceEmailError = null;
     if (request.SelfServiceEnabled == true && !string.IsNullOrWhiteSpace(request.SelfServiceEmail))
     {
         var email = request.SelfServiceEmail.Trim().ToLowerInvariant();
@@ -2547,7 +2611,19 @@ app.MapPut("/api/employees/{id:guid}", async (
                     ["{{password}}"] = tempPassword,
                     ["{{companyName}}"] = "ProjectX"
                 }, cancellationToken);
-                await emailService.SendAsync(email, emailSubject, emailBody, cancellationToken);
+                // Аккаунт уже создан, а временный пароль возвращается администратору в ответе,
+                // поэтому неотправленное письмо не должно ронять весь запрос — только лог.
+                try
+                {
+                    await emailService.SendAsync(email, emailSubject, emailBody, cancellationToken);
+                    selfServiceEmailSent = true;
+                }
+                catch (Exception ex)
+                {
+                    selfServiceEmailSent = false;
+                    selfServiceEmailError = ex.Message;
+                    logger.LogWarning(ex, "Не удалось отправить письмо с доступом к самообслуживанию на {Email}", email);
+                }
             }
             else
             {
@@ -2615,7 +2691,119 @@ app.MapPut("/api/employees/{id:guid}", async (
         .Include(e => e.Cards).Include(e => e.Faces).Include(e => e.Fingerprints).Include(e => e.Irises)
         .FirstAsync(x => x.Id == id, cancellationToken);
     var updatedResp = MapEmployeeDetailResponse(updated);
-    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.EmployeeNo, updatedResp.ExternalId, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.OnlyVerify, updatedResp.Department, updatedResp.Position, updatedResp.CompanyId, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, updatedResp.Irises, updatedResp.SelfServiceEnabled, updatedResp.SelfServiceEmail, updatedResp.WorkScheduleId, updatedResp.WorkScheduleName, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null, selfServiceTempPassword });
+    return Results.Ok(new { updatedResp.Id, updatedResp.FirstName, updatedResp.LastName, updatedResp.EmployeeNo, updatedResp.ExternalId, updatedResp.Gender, updatedResp.ValidFromUtc, updatedResp.ValidToUtc, updatedResp.IsActive, updatedResp.OnlyVerify, updatedResp.Department, updatedResp.Position, updatedResp.CompanyId, updatedResp.AccessLevels, updatedResp.Cards, updatedResp.Faces, updatedResp.Fingerprints, updatedResp.Irises, updatedResp.SelfServiceEnabled, updatedResp.SelfServiceEmail, updatedResp.WorkScheduleId, updatedResp.WorkScheduleName, syncWarnings = syncWarnings.Count > 0 ? syncWarnings : null, selfServiceTempPassword, selfServiceEmailSent, selfServiceEmailError });
+}).RequireAuthorization("Employees.Manage");
+
+// ─── Доступ к самообслуживанию: выдать или перевыпустить пароль ────────────────
+// Кнопка «Create self-service» на карточке сотрудника. Каждое нажатие выдаёт НОВЫЙ
+// временный пароль (старый перестаёт работать), шлёт письмо и возвращает пароль,
+// чтобы показать его администратору один раз — письмо может и не дойти.
+app.MapPost("/api/employees/{id:guid}/self-service", async (
+    Guid id,
+    SelfServiceAccessRequest? request,
+    AppDbContext dbContext,
+    UserManager<ApplicationUser> userManager,
+    IEmailService emailService,
+    IEmailTemplateService emailTemplateService,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    var entity = await dbContext.Employees.FirstOrDefaultAsync(x => x.Id == id && x.Kind == PersonKind.Employee, cancellationToken);
+    if (entity is null) return Results.NotFound();
+
+    // Адрес может быть ещё не сохранён (только что вписан в форму) — берём из запроса.
+    var email = (request?.Email ?? entity.SelfServiceEmail ?? "").Trim().ToLowerInvariant();
+    if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
+        return Results.BadRequest(new { message = "A valid self-service sign-in email is required." });
+
+    var tempPassword = $"SS_{Guid.NewGuid():N}!1";
+    var user = await userManager.FindByEmailAsync(email);
+    if (user is null)
+    {
+        user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            FirstName = entity.FirstName,
+            LastName = entity.LastName,
+            EmployeeId = entity.Id,
+            // При первом входе сотрудник обязан сменить выданный пароль.
+            RequiresPasswordSetup = true
+        };
+        var created = await userManager.CreateAsync(user, tempPassword);
+        if (!created.Succeeded)
+            return Results.BadRequest(new { message = string.Join("; ", created.Errors.Select(e => e.Description)) });
+        await userManager.AddToRoleAsync(user, SystemRoles.Employee);
+    }
+    else
+    {
+        // Чужой аккаунт под этим адресом не трогаем: ни привязанный к другому сотруднику,
+        // ни административный (роль выше Employee) — иначе кнопка на карточке сбросила бы
+        // пароль администратору. Непривязанную учётку принимаем, только если это портал сотрудника.
+        if (user.EmployeeId.HasValue && user.EmployeeId != entity.Id)
+            return Results.BadRequest(new { message = "This email is already linked to another employee." });
+        if (!user.EmployeeId.HasValue)
+        {
+            var roles = await userManager.GetRolesAsync(user);
+            if (roles.Any(r => !string.Equals(r, SystemRoles.Employee, StringComparison.OrdinalIgnoreCase)))
+                return Results.BadRequest(new { message = "This email belongs to a staff account — use a different sign-in email." });
+        }
+
+        // Пароль заменяем напрямую (как в /api/auth/set-password): это админское действие,
+        // токен сброса тут не нужен. RemovePassword обновляет security stamp — старые сессии отвалятся.
+        var reset = await userManager.RemovePasswordAsync(user);
+        if (reset.Succeeded)
+            reset = await userManager.AddPasswordAsync(user, tempPassword);
+        if (!reset.Succeeded)
+            return Results.BadRequest(new { message = string.Join("; ", reset.Errors.Select(e => e.Description)) });
+
+        user.EmployeeId = entity.Id;
+        user.RequiresPasswordSetup = true;
+        await userManager.UpdateAsync(user);
+        if (!await userManager.IsInRoleAsync(user, SystemRoles.Employee))
+            await userManager.AddToRoleAsync(user, SystemRoles.Employee);
+    }
+
+    entity.SelfServiceEnabled = true;
+    entity.SelfServiceEmail = email;
+    entity.UpdatedUtc = DateTime.UtcNow;
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    // Доступ уже выдан, поэтому неотправленное письмо не отменяет операцию:
+    // пароль вернётся администратору, и он передаст его сам.
+    bool emailSent;
+    // Текст ошибки SMTP уходит администратору вместе с паролем: логи сервиса пишутся
+    // только в консоль, поэтому иначе причину «письмо не пришло» на сервере не увидеть.
+    string? emailError = null;
+    try
+    {
+        var (subject, body) = await emailTemplateService.RenderAsync("selfservice_created", new()
+        {
+            ["{{firstName}}"] = entity.FirstName ?? "",
+            ["{{lastName}}"] = entity.LastName ?? "",
+            ["{{email}}"] = email,
+            ["{{password}}"] = tempPassword,
+            ["{{companyName}}"] = "ProjectX"
+        }, cancellationToken);
+        await emailService.SendAsync(email, subject, body, cancellationToken);
+        emailSent = true;
+    }
+    catch (Exception ex)
+    {
+        emailSent = false;
+        emailError = ex.Message;
+        loggerFactory.CreateLogger("SelfService")
+            .LogWarning(ex, "Не удалось отправить письмо с доступом к самообслуживанию на {Email}", email);
+    }
+
+    return Results.Ok(new
+    {
+        selfServiceEmail = email,
+        selfServiceTempPassword = tempPassword,
+        selfServiceEmailSent = emailSent,
+        selfServiceEmailError = emailError
+    });
 }).RequireAuthorization("Employees.Manage");
 
 app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
@@ -4177,7 +4365,8 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Gui
     // +1 день логов: для ночных смен check-out попадает на следующие сутки.
     var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
         .Where(r => r.EventTimeUtc >= dayStartUtc && r.EventTimeUtc < dayEndUtc.AddDays(1))
-        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+            r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
         .ToListAsync(cancellationToken);
 
     var byEmpNo = logs
@@ -4185,7 +4374,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, Gui
         .GroupBy(r => r.EmployeeNoString.Trim(), StringComparer.OrdinalIgnoreCase)
         .ToDictionary(
             g => g.Key,
-            g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc), Count = g.Count() },
+            g => DayPunches.Stat(g),
             StringComparer.OrdinalIgnoreCase);
     var nextDayFirstByEmpNo = logs
         .Where(r => empNos.Contains(r.EmployeeNoString.Trim()) && r.EventTimeUtc >= dayEndUtc)
@@ -4308,7 +4497,8 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
     var rangeEndExclusive = toUtc.AddDays(2);
     var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
         .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEndExclusive)
-        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+            r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
         .ToListAsync(cancellationToken);
 
     var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
@@ -4320,7 +4510,7 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
         .ToDictionary(
             g => g.Key,
-            g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc), Count = g.Count() });
+            g => DayPunches.Stat(g));
 
     // Approved leaves overlapping the range: covered working days are "on leave", not "absent".
     var empIdsForLeave = employees.Select(e => e.Id).ToList();
@@ -4455,11 +4645,12 @@ static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int m
     var rangeEndExclusive = toUtc.AddDays(2);
     var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
         .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEndExclusive)
-        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+            r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
         .ToListAsync(cancellationToken);
     var byEmpNoDay = logs
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
-        .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+        .ToDictionary(g => g.Key, g => DayPunches.Stat(g));
 
     var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
         .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc)
@@ -5120,6 +5311,34 @@ app.MapPut("/api/attendance-requests/{id:guid}/approve", async (Guid id, ReviewA
         else
             existingCorr.CheckOutUtc = entity.RequestedTimeUtc;
     }
+    else if (entity.Type == AttendanceRequestType.Absence && entity.RequestedEndTimeUtc.HasValue)
+    {
+        // Почасовая отлучка (icazə): интервал целиком внутри одних локальных суток →
+        // одобрение создаёт AttendancePermission, и часы вычитаются из отчёта.
+        // Многодневный Absence так не разворачиваем — это отгул, он подаётся как EmployeeLeave.
+        var tz = TimeZoneInfo.Local;
+        var startLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(entity.RequestedTimeUtc, DateTimeKind.Utc), tz);
+        var endLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(entity.RequestedEndTimeUtc.Value, DateTimeKind.Utc), tz);
+        if (startLocal.Date == endLocal.Date && endLocal > startLocal)
+        {
+            // Ключ (EmployeeId, Date) — одно разрешение на день, поэтому upsert:
+            // повторное одобрение на ту же дату перезаписывает интервал.
+            var permDate = DateOnly.FromDateTime(startLocal);
+            var perm = await dbContext.AttendancePermissions
+                .FirstOrDefaultAsync(p => p.EmployeeId == entity.EmployeeId && p.Date == permDate, cancellationToken);
+            if (perm is null)
+            {
+                perm = new AttendancePermission { EmployeeId = entity.EmployeeId, Date = permDate };
+                dbContext.AttendancePermissions.Add(perm);
+            }
+            else perm.UpdatedUtc = DateTime.UtcNow;
+            perm.FromTime = startLocal.TimeOfDay;
+            perm.ToTime = endLocal.TimeOfDay;
+            // Comment заявки — до 1000 символов, Reason разрешения — 500.
+            perm.Reason = entity.Comment?.Length > 500 ? entity.Comment[..500] : entity.Comment;
+            perm.ShowInReport = true;
+        }
+    }
     await dbContext.SaveChangesAsync(cancellationToken);
 
     // Notify the employee whose request was approved
@@ -5228,7 +5447,8 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
     var rangeEnd = toUtc.AddDays(2);
     var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
         .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEnd)
-        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+            r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
         .ToListAsync(ct);
 
     var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
@@ -5250,7 +5470,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
 
     var byEmpNoDay = logs
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
-        .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+        .ToDictionary(g => g.Key, g => DayPunches.Stat(g));
 
     var rows = new List<AttendancePeriodRow>();
     string? singleEmpName = null;
@@ -5306,7 +5526,7 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
 // Даты приходят как календарные дни ("2026-08-02") — биндим DateOnly и НЕ конвертируем
 // через ToUniversalTime(): DateTime с Kind=Unspecified трактовался как локальное время
 // сервера (+4 Баку) и период уезжал на день назад относительно выбранного в UI.
-app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, string? columns, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -5316,12 +5536,13 @@ app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to,
     var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, departmentId, dbContext, ct);
-    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
+    // columns — колонки, оставленные в таблице. Пусто или параметра нет — весь набор.
+    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns));
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
 }).RequireAuthorization("Reports.View");
 
-app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, Guid? departmentId, string? columns, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -5331,7 +5552,7 @@ app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, G
     var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, departmentId, dbContext, ct);
-    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName);
+    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns));
     return Results.File(bytes, "application/pdf", $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
 }).RequireAuthorization("Reports.View");
 
@@ -5543,7 +5764,7 @@ app.MapGet("/api/notifications/unread-count", async (ClaimsPrincipal user, INoti
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    var count = await notifService.GetUnreadCountAsync(userId, ct);
+    var count = await notifService.GetUnreadCountAsync(userId, ct: ct);
     return Results.Ok(new { count });
 }).RequireAuthorization();
 
@@ -5551,7 +5772,7 @@ app.MapPost("/api/notifications/{id:guid}/read", async (Guid id, ClaimsPrincipal
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    await notifService.MarkReadAsync(id, userId, ct);
+    await notifService.MarkReadAsync(id, userId, ct: ct);
     return Results.Ok();
 }).RequireAuthorization();
 
@@ -5559,7 +5780,7 @@ app.MapPost("/api/notifications/read-all", async (ClaimsPrincipal user, INotific
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    await notifService.MarkAllReadAsync(userId, ct);
+    await notifService.MarkAllReadAsync(userId, ct: ct);
     return Results.Ok();
 }).RequireAuthorization();
 
@@ -5655,7 +5876,7 @@ app.MapGet("/api/self-service/requests", async (ClaimsPrincipal user, UserManage
     return Results.Ok(requests);
 }).RequireAuthorization();
 
-app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody request, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, AppDbContext dbContext, CancellationToken cancellationToken) =>
+app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody request, ClaimsPrincipal user, UserManager<ApplicationUser> userManager, AppDbContext dbContext, INotificationService notifService, CancellationToken cancellationToken) =>
 {
     var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
     if (!Guid.TryParse(userIdStr, out var userId)) return Results.Unauthorized();
@@ -5667,6 +5888,20 @@ app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody req
     // Overtime is not a self-service request type.
     if (reqType == AttendanceRequestType.Overtime)
         return Results.BadRequest(new { message = "Overtime requests are not available in self-service." });
+
+    // Absence с концом интервала — почасовая отлучка (icazə). После одобрения она станет
+    // AttendancePermission, а тот уникален по (EmployeeId, Date) и живёт в пределах суток,
+    // поэтому проверяем границы здесь, а не молча теряем часы на approve.
+    if (reqType == AttendanceRequestType.Absence && request.RequestedEndTimeUtc.HasValue)
+    {
+        var tz = TimeZoneInfo.Local;
+        var startLocal = TimeZoneInfo.ConvertTimeFromUtc(request.RequestedTimeUtc.ToUniversalTime(), tz);
+        var endLocal = TimeZoneInfo.ConvertTimeFromUtc(request.RequestedEndTimeUtc.Value.ToUniversalTime(), tz);
+        if (endLocal <= startLocal)
+            return Results.BadRequest(new { message = "requestedEndTimeUtc must be after requestedTimeUtc." });
+        if (startLocal.Date != endLocal.Date)
+            return Results.BadRequest(new { message = "Hourly absence must start and end on the same day." });
+    }
 
     // Гео-проверка: если CheckIn/CheckOut и координаты в радиусе активной зоны → авто-аппрув.
     string? matchedZone = null;
@@ -5721,7 +5956,19 @@ app.MapPost("/api/self-service/requests", async (CreateAttendanceRequestBody req
     }
 
     await dbContext.SaveChangesAsync(cancellationToken);
-    return Results.Created($"/api/self-service/requests/{entity.Id}", new { entity.Id, entity.Type, entity.RequestedTimeUtc, entity.Status, autoApproved = inZone, matchedZone });
+
+    // Отлучка/отпуск ждут решения человека — оповещаем согласующих (broadcast, как в
+    // /self-service/leaves), иначе заявка молча висит в Pending. Check-in/check-out
+    // намеренно не трогаем: их поток не менялся.
+    if (reqType is AttendanceRequestType.Absence or AttendanceRequestType.Vacation)
+        _ = notifService.CreateAsync(
+            NotificationTypes.ApprovalRequest,
+            NTitle("notifications.titles.approvalRequest"),
+            NBody("notifications.bodies.approvalRequest", new { name = appUser.UserName, type = reqType.ToString() }),
+            referenceId: entity.Id.ToString(),
+            ct: CancellationToken.None);
+
+    return Results.Created($"/api/self-service/requests/{entity.Id}", new { entity.Id, entity.Type, entity.RequestedTimeUtc, entity.RequestedEndTimeUtc, entity.Status, autoApproved = inZone, matchedZone });
 }).RequireAuthorization();
 
 // Отмена собственной Pending-заявки. Approved/Rejected уже не отменяются — это решение админа.
@@ -5807,15 +6054,20 @@ app.MapGet("/api/self-service/schedule", async (
     var rangeFromUtc = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var rangeToUtcExcl = toDate.AddDays(2).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var empNo = (employee.EmployeeNo ?? "").Trim();
-    var logsByDay = new Dictionary<DateOnly, (DateTime First, DateTime Last)>();
+    var logsByDay = new Dictionary<DateOnly, (DateTime? First, DateTime? Last)>();
     if (!string.IsNullOrEmpty(empNo))
     {
         var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
             .Where(r => r.EmployeeNoString == empNo && r.EventTimeUtc >= rangeFromUtc && r.EventTimeUtc < rangeToUtcExcl)
-            .Select(r => r.EventTimeUtc)
+            .Select(r => new
+            {
+                r.EventTimeUtc,
+                Direction = r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both,
+            })
             .ToListAsync(cancellationToken);
-        logsByDay = logs.GroupBy(t => DateOnly.FromDateTime(t.Date))
-            .ToDictionary(g => g.Key, g => (g.Min(), g.Max()));
+        logsByDay = logs.GroupBy(t => DateOnly.FromDateTime(t.EventTimeUtc.Date))
+            .ToDictionary(g => g.Key,
+                g => DayPunches.Reduce(g, x => x.EventTimeUtc, x => x.Direction));
     }
     var corrByDate = (await dbContext.AttendanceCorrections.AsNoTracking()
             .Where(c => c.EmployeeId == appUser.EmployeeId && c.DateUtc >= rangeFromUtc && c.DateUtc < rangeToUtcExcl)
@@ -5977,13 +6229,18 @@ app.MapDelete("/api/self-service/leaves/{id:guid}", async (
 }).RequireAuthorization();
 
 // ─── Self-Service: notifications (own user) ──────────────────────────────────
+//
+// includeBroadcasts: false — сотруднику адресованы только его персональные
+// уведомления (заявка одобрена / отклонена). Рассылка с UserId == null —
+// ежедневный отчёт, парковка, устройство offline, «сотрудник подал заявку» —
+// предназначена администраторам и согласующим и остаётся в /api/notifications.
 
 app.MapGet("/api/self-service/notifications", async (
     ClaimsPrincipal user, INotificationService notifService, CancellationToken ct) =>
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    return Results.Ok(await notifService.GetForUserAsync(userId, ct: ct));
+    return Results.Ok(await notifService.GetForUserAsync(userId, includeBroadcasts: false, ct: ct));
 }).RequireAuthorization();
 
 app.MapGet("/api/self-service/notifications/unread-count", async (
@@ -5991,7 +6248,7 @@ app.MapGet("/api/self-service/notifications/unread-count", async (
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    return Results.Ok(new { count = await notifService.GetUnreadCountAsync(userId, ct) });
+    return Results.Ok(new { count = await notifService.GetUnreadCountAsync(userId, includeBroadcasts: false, ct: ct) });
 }).RequireAuthorization();
 
 app.MapPost("/api/self-service/notifications/{id:guid}/read", async (
@@ -5999,7 +6256,7 @@ app.MapPost("/api/self-service/notifications/{id:guid}/read", async (
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    await notifService.MarkReadAsync(id, userId, ct);
+    await notifService.MarkReadAsync(id, userId, includeBroadcasts: false, ct: ct);
     return Results.NoContent();
 }).RequireAuthorization();
 
@@ -6008,7 +6265,7 @@ app.MapPost("/api/self-service/notifications/read-all", async (
 {
     if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         return Results.Unauthorized();
-    await notifService.MarkAllReadAsync(userId, ct);
+    await notifService.MarkAllReadAsync(userId, includeBroadcasts: false, ct: ct);
     return Results.NoContent();
 }).RequireAuthorization();
 
@@ -6789,7 +7046,8 @@ app.MapPost("/api/reports/attendance/send-email", async (
     var rangeEnd = toUtc.AddDays(1);
     var logs = await dbContext.DeviceAuthLogs.AsNoTracking()
         .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEnd)
-        .Select(r => new { r.EmployeeNoString, r.EventTimeUtc })
+        .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+            r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
         .ToListAsync(cancellationToken);
 
     var corrections = await dbContext.AttendanceCorrections.AsNoTracking()
@@ -6799,7 +7057,27 @@ app.MapPost("/api/reports/attendance/send-email", async (
 
     var byEmpNoDay = logs
         .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
-        .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+        .ToDictionary(g => g.Key, g => DayPunches.Stat(g));
+
+    // Письмо показывает те же колонки, что остались в таблице. Заголовок тоже
+    // собирается здесь: в шаблоне на его месте стоит {{tableHead}}.
+    var visible = AttendanceColumns.Parse(request.Columns);
+    var emailCols = new (string Key, string Header, bool Center)[]
+    {
+        (AttendanceColumns.Date, "Date", false),
+        (AttendanceColumns.Employee, "Employee", false),
+        (AttendanceColumns.Department, "Department", false),
+        (AttendanceColumns.CheckIn, "Check-In", true),
+        (AttendanceColumns.CheckOut, "Check-Out", true),
+        (AttendanceColumns.Hours, "Hours", true),
+        (AttendanceColumns.Late, "Late", true),
+    }.Where(c => visible.Contains(c.Key)).ToArray();
+    if (emailCols.Length == 0)
+        return Results.BadRequest(new { message = "At least one report column must stay visible." });
+
+    var tableHead = new System.Text.StringBuilder();
+    foreach (var c in emailCols)
+        tableHead.Append($"<th style='padding:9px 12px;text-align:{(c.Center ? "center" : "left")};font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0'>{c.Header}</th>");
 
     var tableRows = new System.Text.StringBuilder();
     for (var day = fromUtc; day <= toUtc; day = day.AddDays(1))
@@ -6827,7 +7105,22 @@ app.MapPost("/api/reports/attendance/send-email", async (
             var coStr = last.HasValue && last != first ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm") : "—";
             var lateStr = lateMin is > 0 ? $"+{lateMin}m" : "—";
             var hoursStr = hours > 0 ? hours.ToString("0.0") : "—";
-            tableRows.Append($"<tr><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{day:dd.MM.yyyy}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{name}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0'>{dept}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{ciStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{coStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{hoursStr}</td><td style='padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:center'>{lateStr}</td></tr>");
+            tableRows.Append("<tr>");
+            foreach (var c in emailCols)
+            {
+                var value = c.Key switch
+                {
+                    AttendanceColumns.Date => $"{day:dd.MM.yyyy}",
+                    AttendanceColumns.Employee => name,
+                    AttendanceColumns.Department => dept,
+                    AttendanceColumns.CheckIn => ciStr,
+                    AttendanceColumns.CheckOut => coStr,
+                    AttendanceColumns.Hours => hoursStr,
+                    _ => lateStr,
+                };
+                tableRows.Append($"<td style='padding:5px 10px;border-bottom:1px solid #e2e8f0{(c.Center ? ";text-align:center" : "")}'>{value}</td>");
+            }
+            tableRows.Append("</tr>");
         }
     }
 
@@ -6837,6 +7130,7 @@ app.MapPost("/api/reports/attendance/send-email", async (
         ["{{companyName}}"] = companyName,
         ["{{fromDate}}"] = request.From.ToString("dd.MM.yyyy"),
         ["{{toDate}}"] = request.To2.ToString("dd.MM.yyyy"),
+        ["{{tableHead}}"] = tableHead.ToString(),
         ["{{tableRows}}"] = tableRows.ToString(),
         ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
     }, cancellationToken);
@@ -10706,6 +11000,7 @@ static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? 
         lastSeenUtc,
         device.Username,
         statusMessage,
+        device.AttendanceDirection.ToString(),
         device.ParkingDirection?.ToString(),
         device.ParkingZoneId,
         device.BarrierOutput);
@@ -10724,6 +11019,21 @@ static string MapConnectivityStatus(DeviceConnectivityStatus status)
 /// </summary>
 /// <summary>Ноль и отрицательные значения означают «не управлять шлагбаумом» — храним как null.</summary>
 static int? NormalizeBarrierOutput(int? raw) => raw is > 0 ? raw : null;
+
+
+/// <summary>
+/// Направление для табеля приходит строкой ("Both"/"In"/"Out") — по тем же причинам,
+/// что и направление ANPR-камеры: JsonStringEnumConverter глобально не включён.
+/// Пусто или null — Both, то есть прежнее поведение.
+/// </summary>
+static bool TryParseAttendanceDirection(string? raw, out AttendanceDirection value)
+{
+    value = AttendanceDirection.Both;
+    if (string.IsNullOrWhiteSpace(raw)) return true;
+    if (!Enum.TryParse<AttendanceDirection>(raw.Trim(), ignoreCase: true, out var parsed)) return false;
+    value = parsed;
+    return true;
+}
 
 static bool TryParseParkingDirection(string? raw, out ParkingCameraDirection? value)
 {
@@ -10801,9 +11111,16 @@ static VisitorResponse MapVisitorResponse(Visitor v)
     var accessNames = v.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
     var dept = v.Department != null ? new DepartmentRef(v.Department.Id, v.Department.Name) : null;
     var primaryFaceId = (v.Faces ?? []).OrderBy(f => f.CreatedUtc).Select(f => (Guid?)f.Id).FirstOrDefault();
+    // Пропуск-билет строится по QR-карте; обычные карты турникет читает иначе.
+    var qrCardNo = (v.Cards ?? [])
+        .Where(c => string.Equals(c.CardType, "qrCode", StringComparison.OrdinalIgnoreCase))
+        .OrderBy(c => c.CreatedUtc)
+        .Select(c => c.CardNo)
+        .FirstOrDefault();
     return new VisitorResponse(
         v.Id, v.FirstName, v.LastName, v.DocumentNumber, v.ValidFromUtc, v.ValidToUtc, v.IsActive,
-        accessNames, dept, v.CompanyId, primaryFaceId, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0, v.Irises?.Count ?? 0);
+        accessNames, dept, v.CompanyId, primaryFaceId, v.Cards?.Count ?? 0, v.Faces?.Count ?? 0, v.Fingerprints?.Count ?? 0, v.Irises?.Count ?? 0,
+        qrCardNo);
 }
 
 static VisitorDetailResponse MapVisitorDetailResponse(Visitor v)
@@ -10958,6 +11275,12 @@ internal static class ParkingSnapshotPaths
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, string> Known = new();
 }
 
+/// <summary>Событие турникета вместе с тем, что фиксирует устройство.</summary>
+internal sealed record PunchEvent(string EmployeeNoString, DateTime EventTimeUtc, AttendanceDirection Direction);
+
+/// <summary>Приход, уход и число событий за день.</summary>
+internal sealed record DayPunchStat(DateTime? First, DateTime? Last, int Count);
+
 public sealed record CreateDeviceRequest(
     string DeviceIdentifier,
     string Name,
@@ -10967,6 +11290,8 @@ public sealed record CreateDeviceRequest(
     DeviceType DeviceType,
     string? Username,
     string? Password,
+    /// <summary>Что проход означает для табеля: "Both" (по умолчанию), "In" или "Out".</summary>
+    string? AttendanceDirection = null,
     /// <summary>Только для ANPR-камеры: "Entry"/"Exit". null или пусто — определять по открытой сессии.</summary>
     string? ParkingDirection = null,
     Guid? ParkingZoneId = null,
@@ -10982,6 +11307,8 @@ public sealed record UpdateDeviceRequest(
     DeviceType DeviceType,
     string? Username,
     string? Password,
+    /// <summary>Что проход означает для табеля: "Both" (по умолчанию), "In" или "Out".</summary>
+    string? AttendanceDirection = null,
     /// <summary>Только для ANPR-камеры: "Entry"/"Exit". null или пусто — определять по открытой сессии.</summary>
     string? ParkingDirection = null,
     Guid? ParkingZoneId = null,
@@ -11000,6 +11327,7 @@ public sealed record DeviceResponse(
     DateTime? LastSeenUtc,
     string? Username,
     string? StatusMessage,
+    string? AttendanceDirection = null,
     string? ParkingDirection = null,
     Guid? ParkingZoneId = null,
     int? BarrierOutput = null);
@@ -11042,6 +11370,8 @@ public sealed record CreateHousingBlockRequest(string Name, string? Description,
 public sealed record UpdateHousingBlockRequest(string Name, string? Description, Guid? ParentId, int? SortOrder);
 
 public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
+/// <summary>Тело запроса на выдачу доступа к самообслуживанию; email — из формы, если он ещё не сохранён.</summary>
+public sealed record SelfServiceAccessRequest(string? Email);
 public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
@@ -11055,7 +11385,9 @@ public sealed record DepartmentRef(Guid Id, string Name);
 public sealed record PositionRef(Guid Id, string Name);
 public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, Guid? WorkScheduleId = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
 public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
-public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount);
+/// <summary>QrCardNo — номер QR-пропуска гостя (карта с CardType "qrCode"), если он выдан.
+/// По нему список строит пропуск-билет, не запрашивая карточку целиком.</summary>
+public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, string? QrCardNo);
 public sealed record VisitorDetailResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises);
 public sealed record AccessLevelRef(Guid Id, string Name);
 public sealed record CardRef(Guid Id, string CardNo, string? CardNumber, string? CardType = null);
@@ -11234,6 +11566,46 @@ public sealed record DayAttendance(
     int? EarlyLeaveMinutes,
     bool Corrected);
 
+/// <summary>
+/// Сводит события турникетов за день в пару «приход / уход» с учётом того, что
+/// фиксирует устройство (<see cref="AttendanceDirection"/>).
+///
+/// Приход — самое раннее событие на устройстве, которое пишет вход (In или Both);
+/// уход — самое позднее на устройстве, которое пишет выход (Out или Both). Если
+/// подходящих событий нет, сторона остаётся null.
+///
+/// Это и снимает старую проблему: пока все устройства Both, несколько проходов
+/// подряд утром выглядели как приход и уход, и сотрудник числился ушедшим.
+/// Разведя вход и выход по устройствам, повторный проход через «только вход»
+/// день уже не закрывает.
+/// </summary>
+internal static class DayPunches
+{
+    public static (DateTime? First, DateTime? Last) Reduce<T>(
+        IEnumerable<T> events,
+        Func<T, DateTime> timeUtc,
+        Func<T, AttendanceDirection> direction)
+    {
+        DateTime? first = null, last = null;
+        foreach (var e in events)
+        {
+            var t = timeUtc(e);
+            var d = direction(e);
+            if (d != AttendanceDirection.Out && (first is null || t < first)) first = t;
+            if (d != AttendanceDirection.In && (last is null || t > last)) last = t;
+        }
+        return (first, last);
+    }
+
+    /// <summary>Приход/уход плюс число событий за день.</summary>
+    public static DayPunchStat Stat(IEnumerable<PunchEvent> events)
+    {
+        var list = events as ICollection<PunchEvent> ?? events.ToList();
+        var (first, last) = Reduce(list, e => e.EventTimeUtc, e => e.Direction);
+        return new DayPunchStat(first, last, list.Count);
+    }
+}
+
 internal static class AttendanceDayCalculator
 {
     /// <param name="baseSchedule">Employee's base WorkSchedule (Shifts loaded for Multi).</param>
@@ -11319,6 +11691,14 @@ internal static class AttendanceDayCalculator
         }
 
         // CountEarlyArrival=false → time before ShiftStart is not counted (clamp to ShiftStart).
+        // «Уход» раньше прихода — не уход. Так выходит, когда сотрудник сначала
+        // прошёл турникет, а потом отметил приход в приложении: коррекция
+        // становится first, а последний лог турникета остаётся в last и
+        // оказывается раньше неё. Без этой нормализации день считался бы
+        // закрытым (в мобильном — «Not checked in» сразу после отметки прихода),
+        // а totalHours уходил бы в минус.
+        if (first.HasValue && last.HasValue && last.Value < first.Value) last = null;
+
         var effectiveFirst = first;
         if (first.HasValue && shiftStart is TimeSpan ssClamp && effectiveSchedule is { CountEarlyArrival: false })
         {
@@ -11398,11 +11778,12 @@ internal static class AttendanceCalculator
 
         var logs = await db.DeviceAuthLogs.AsNoTracking()
             .Where(l => l.EventTimeUtc >= periodStartUtc && l.EventTimeUtc < periodEndExclusiveUtc)
-            .Select(l => new { l.EmployeeNoString, l.EventTimeUtc })
+            .Select(l => new PunchEvent(l.EmployeeNoString, l.EventTimeUtc,
+                l.Device != null ? l.Device.AttendanceDirection : AttendanceDirection.Both))
             .ToListAsync(ct);
         var logsByEmpDay = logs
             .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.ToLocalTime().Date))
-            .ToDictionary(g => g.Key, g => new { First = g.Min(x => x.EventTimeUtc), Last = g.Max(x => x.EventTimeUtc) });
+            .ToDictionary(g => g.Key, g => DayPunches.Stat(g));
 
         var corrections = await db.AttendanceCorrections.AsNoTracking()
             .Where(c => c.DateUtc >= periodStartUtc && c.DateUtc < periodEndExclusiveUtc)
@@ -11496,7 +11877,8 @@ public sealed record SmtpTestRequest(
     bool EnableSsl);
 public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody);
 public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
-public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2);
+/// <summary>Columns — колонки, оставленные в таблице; null или пусто — весь набор.</summary>
+public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2, string[]? Columns = null);
 public sealed record SendPayrollReportRequest(string To);
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub, INotificationService notificationService) : IDeviceStatusBroadcaster

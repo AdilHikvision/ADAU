@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
+import { Pagination, usePageReset, pageSlice, PAGE_SIZE } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import { useExportReport } from '../hooks/useExportReport'
@@ -55,6 +56,8 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
   const [mhData, setMhData] = useState<MhEmp[]>([])
   const [mhLoading, setMhLoading] = useState(true)
   const [mhError, setMhError] = useState('')
+  // Ay və ya filtr dəyişəndə səhifə birinciyə qayıdır.
+  const [mhPage, setMhPage] = usePageReset(`${month}|${employeeId ?? ''}|${departmentId ?? ''}`)
   const [mhCrit, setMhCrit] = useState<AttCriterion[]>(() => {
     try { const c = localStorage.getItem('projectx.attCriteria'); if (c) { const p = JSON.parse(c); if (Array.isArray(p) && p.length) return p } } catch { /* noop */ }
     return MH_CRIT_DEFAULTS
@@ -99,6 +102,8 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
 
   const nDays = mhDaysInMonth(mhMonth)
   const rows = mhData
+  // Səhifədə 50 işçi; başlıqdakı sayğaclar bütün siyahıya görə qalır.
+  const paged = pageSlice(rows, mhPage)
   const sumHours = rows.reduce((s, e) => s + (parseInt(e.totalHours, 10) || 0), 0)
   const dayNums = Array.from({ length: nDays }, (_, k) => k + 1)
   // Defaults + server siyahısı: serverdə çatışmayan açar (məs. absent) default-dan gəlir, boş xana qalmır.
@@ -150,9 +155,9 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
                 </tr>
               </thead>
               <tbody>
-                {rows.map((e, i) => (
+                {paged.rows.map((e, i) => (
                   <tr key={e.no || e.externalId || i}>
-                    <td className="stick wf-mh-c-ss">{i + 1}</td>
+                    <td className="stick wf-mh-c-ss">{(paged.page - 1) * PAGE_SIZE + i + 1}</td>
                     <td className="stick wf-mh-c-no">{e.externalId || '—'}</td>
                     <td className="stick wf-mh-c-name">{e.fullname}</td>
                     <td className="wf-mh-c-pos">{e.position}</td>
@@ -187,6 +192,10 @@ function MonthlyHoursTable({ month, employeeId, departmentId }: { month: string;
             </table>
           )}
         </div>
+
+        {!mhLoading && !mhError && rows.length > 0 && (
+          <Pagination page={paged.page} totalPages={paged.totalPages} total={rows.length} onPage={setMhPage} />
+        )}
 
         <div className="wf-mh-legend">
           <span className="lg-lbl">{t('workHours.tabel.legendTitle')}</span>
@@ -540,10 +549,57 @@ function computeShiftHours(start: string, end: string): number | null {
   return (endMin - startMin) / 60
 }
 
+/**
+ * Колонки отчёта по посещаемости. Ключи те же, что у бэкенда (AttendanceColumns):
+ * скрытая здесь колонка не попадает ни в таблицу, ни в Excel/PDF, ни в письмо.
+ * Часть ключей в таблице не показывается — их набор шире, потому что в выгрузках
+ * колонок больше, чем на экране.
+ */
+const ATTENDANCE_COLUMNS = [
+  'employee', 'department', 'date', 'schedule', 'shift', 'checkIn', 'checkOut',
+  'hours', 'norm', 'overtime', 'late', 'early', 'status', 'corrected',
+] as const
+type AttendanceColumn = typeof ATTENDANCE_COLUMNS[number]
+const COLUMNS_STORAGE_KEY = 'workHours.visibleColumns'
+
+/** Пусто, битое значение или ни одного известного ключа — показываем всё. */
+function loadVisibleColumns(): Set<AttendanceColumn> {
+  try {
+    const raw = localStorage.getItem(COLUMNS_STORAGE_KEY)
+    if (!raw) return new Set(ATTENDANCE_COLUMNS)
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set(ATTENDANCE_COLUMNS)
+    const known = parsed.filter((k): k is AttendanceColumn =>
+      (ATTENDANCE_COLUMNS as readonly string[]).includes(k as string))
+    return known.length > 0 ? new Set(known) : new Set(ATTENDANCE_COLUMNS)
+  } catch {
+    return new Set(ATTENDANCE_COLUMNS)
+  }
+}
+
 export function WorkHoursTrackingPage() {
   const { t } = useTranslation()
   const { token } = useAuth()
   const { exporting, downloadReport } = useExportReport(token)
+  const [visibleColumns, setVisibleColumns] = useState<Set<AttendanceColumn>>(loadVisibleColumns)
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false)
+  const showCol = (key: AttendanceColumn) => visibleColumns.has(key)
+  // То, что уходит в Excel/PDF/письмо: порядок как в ATTENDANCE_COLUMNS.
+  const columnsParam = ATTENDANCE_COLUMNS.filter(showCol).join(',')
+  function toggleColumn(key: AttendanceColumn) {
+    setVisibleColumns((prev) => {
+      const next = new Set(prev)
+      // Последнюю колонку снять нельзя — отчёт стал бы пустым.
+      if (next.has(key)) { if (next.size === 1) return prev; next.delete(key) }
+      else next.add(key)
+      try { localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify([...next])) } catch { /* приватный режим */ }
+      return next
+    })
+  }
+  function resetColumns() {
+    setVisibleColumns(new Set(ATTENDANCE_COLUMNS))
+    try { localStorage.removeItem(COLUMNS_STORAGE_KEY) } catch { /* приватный режим */ }
+  }
   // Стартовые таб/суб-таб можно задать через URL: /work-hours?tab=daily&sub=late
   // (карточки на главной ведут сюда с нужным фильтром).
   const [tab, setTab] = useState<PageTab>(() => {
@@ -599,6 +655,13 @@ export function WorkHoursTrackingPage() {
   const [period, setPeriod] = useState<PeriodRow[]>([])
   const [loading, setLoading] = useState(false)
 
+  // Səhifələmə (50 sətir/səhifə) — hesabat cədvəllərinin hər birinin öz səhifəsi var;
+  // açar dəyişəndə (tab, alt-tab, filtr, tarix) səhifə birinciyə qayıdır.
+  const reportPageKey = `${tab}|${subTab}|${filterEmployee}|${filterDepartment}|${filterDailyDate}|${weeklyAnchor}|${monthlyAnchor}`
+  const [dailyPage, setDailyPage] = usePageReset(reportPageKey)
+  const [periodPage, setPeriodPage] = usePageReset(reportPageKey)
+  const [schedulesPage, setSchedulesPage] = usePageReset(tab)
+
   const [schedules, setSchedules] = useState<WorkScheduleRow[]>([])
   const [scheduleModal, setScheduleModal] = useState<'create' | 'edit' | 'delete' | null>(null)
   const [editingSchedule, setEditingSchedule] = useState<WorkScheduleRow | null>(null)
@@ -632,6 +695,9 @@ export function WorkHoursTrackingPage() {
   // Фильтры таблицы отпусков: поиск по сотруднику + отдел.
   const [leaveSearch, setLeaveSearch] = useState('')
   const [leaveDept, setLeaveDept] = useState('')
+  // Səhifələmə: axtarış/şöbə (məzuniyyətlər) və status tabı (self-service) dəyişəndə səhifə sıfırlanır.
+  const [leavesPage, setLeavesPage] = usePageReset(`${leaveSearch}|${leaveDept}`)
+  const [ssPage, setSsPage] = usePageReset(ssTab)
   const [leaveForm, setLeaveForm] = useState<LeaveForm>({
     employeeId: '',
     leaveType: 'Vacation',
@@ -671,7 +737,7 @@ export function WorkHoursTrackingPage() {
       else if (tab === 'monthly') { const r = monthRange(monthlyAnchor); from = r.from; to = r.to }
       await apiRequest('/api/reports/attendance/send-email', {
         method: 'POST', token,
-        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to }),
+        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to, columns: ATTENDANCE_COLUMNS.filter(showCol) }),
       })
       alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
       setEmailReportModal(false)
@@ -1359,6 +1425,48 @@ useEffect(() => {
 
             {(tab === 'daily' || tab === 'weekly' || tab === 'monthly') && (
               <div className="flex items-end gap-2 flex-wrap">
+                {/* Выбор колонок: применяется и к таблице, и к Excel/PDF/письму. */}
+                <div className="relative">
+                  <Button type="button" icon="view_column" variant="outline" onClick={() => setColumnsMenuOpen((o) => !o)}>
+                    {t('workHours.columns.button')}
+                    {visibleColumns.size < ATTENDANCE_COLUMNS.length && (
+                      <span className="ml-1 text-[10px] font-black text-primary">
+                        {visibleColumns.size}/{ATTENDANCE_COLUMNS.length}
+                      </span>
+                    )}
+                  </Button>
+                  {columnsMenuOpen && (
+                    <>
+                      {/* Клик мимо панели закрывает её. */}
+                      <div className="fixed inset-0 z-10" onClick={() => setColumnsMenuOpen(false)} />
+                      <div className="absolute right-0 z-20 mt-1 w-64 rounded-xl border border-border-base bg-white p-2 shadow-lg">
+                        <p className="px-2 pt-1 pb-2 text-[10px] leading-snug text-text-light">
+                          {t('workHours.columns.hint')}
+                        </p>
+                        <div className="max-h-72 overflow-y-auto">
+                          {ATTENDANCE_COLUMNS.map((key) => (
+                            <label key={key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-slate-75">
+                              <input
+                                type="checkbox"
+                                checked={showCol(key)}
+                                onChange={() => toggleColumn(key)}
+                                className="h-3.5 w-3.5 accent-primary"
+                              />
+                              <span>{t(`workHours.columns.names.${key}`)}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetColumns}
+                          className="mt-1 w-full rounded-md px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-primary hover:bg-slate-75"
+                        >
+                          {t('workHours.columns.showAll')}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <Button type="button" icon="send" variant="outline" onClick={() => setEmailReportModal(true)}>
                   {t('workHours.sendReport')}
                 </Button>
@@ -1376,6 +1484,7 @@ useEffect(() => {
                     const params = new URLSearchParams({ from: range.from, to: range.to })
                     if (filterEmployee) params.set('employeeId', filterEmployee)
                     else if (filterDepartment) params.set('departmentId', filterDepartment)
+                    params.set('columns', columnsParam)
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
                 >
@@ -1395,6 +1504,7 @@ useEffect(() => {
                     const params = new URLSearchParams({ from: range.from, to: range.to })
                     if (filterEmployee) params.set('employeeId', filterEmployee)
                     else if (filterDepartment) params.set('departmentId', filterDepartment)
+                    params.set('columns', columnsParam)
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
                 >
@@ -1527,7 +1637,9 @@ useEffect(() => {
           )}
 
           {/* Schedules — company work time templates */}
-          {tab === 'schedules' && (
+          {tab === 'schedules' && (() => {
+            const pagedSchedules = pageSlice(schedules, schedulesPage)
+            return (
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <p className="text-xs text-text-light max-w-xl">
@@ -1564,7 +1676,7 @@ useEffect(() => {
                         </tr>
                       </thead>
                       <tbody>
-                        {schedules.map((s) => (
+                        {pagedSchedules.rows.map((s) => (
                           <tr key={s.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                             <td className="px-5 py-3 font-bold text-text-dark">
                               <div className="flex items-center gap-2">
@@ -1617,9 +1729,11 @@ useEffect(() => {
                     </table>
                   </div>
                 )}
+                {!loading && <Pagination page={pagedSchedules.page} totalPages={pagedSchedules.totalPages} total={schedules.length} onPage={setSchedulesPage} />}
               </div>
             </div>
-          )}
+            )
+          })()}
 
           {/* Daily Report — one day, only employees with assigned schedule */}
           {tab === 'monthlyHours' && <MonthlyHoursTable month={mhMonth} employeeId={filterEmployee || undefined} departmentId={filterDepartment || undefined} />}
@@ -1637,6 +1751,7 @@ useEffect(() => {
                 default: return true
               }
             })
+            const pagedDaily = pageSlice(filteredDaily, dailyPage)
             return (
             <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border flex items-center justify-between">
@@ -1663,37 +1778,44 @@ useEffect(() => {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
-                        <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>
-                        <th className="px-5 py-3 text-left">{t('workHours.schedule')}</th>
-                        <th className="px-5 py-3 text-left">{t('workHours.shift')}</th>
-                        <th className="px-5 py-3 text-left">{t('workHours.checkIn')}</th>
-                        <th className="px-5 py-3 text-left">{t('workHours.checkOut')}</th>
-                        <th className="px-5 py-3 text-right">{t('workHours.actual')}</th>
-                        <th className="px-5 py-3 text-right">{t('workHours.norm')}</th>
-                        <th className="px-5 py-3 text-right">{t('workHours.late')}</th>
-                        <th className="px-5 py-3 text-right">{t('workHours.early')}</th>
-                        <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>
+                        {showCol('employee') && <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>}
+                        {showCol('schedule') && <th className="px-5 py-3 text-left">{t('workHours.schedule')}</th>}
+                        {showCol('shift') && <th className="px-5 py-3 text-left">{t('workHours.shift')}</th>}
+                        {showCol('checkIn') && <th className="px-5 py-3 text-left">{t('workHours.checkIn')}</th>}
+                        {showCol('checkOut') && <th className="px-5 py-3 text-left">{t('workHours.checkOut')}</th>}
+                        {showCol('hours') && <th className="px-5 py-3 text-right">{t('workHours.actual')}</th>}
+                        {showCol('norm') && <th className="px-5 py-3 text-right">{t('workHours.norm')}</th>}
+                        {showCol('late') && <th className="px-5 py-3 text-right">{t('workHours.late')}</th>}
+                        {showCol('early') && <th className="px-5 py-3 text-right">{t('workHours.early')}</th>}
+                        {showCol('overtime') && <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>}
                         <th className="px-5 py-3 text-right">{t('common.edit')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredDaily.map((d) => (
+                      {pagedDaily.rows.map((d) => (
                         <tr key={`${d.employeeId}-${d.date}`} className={`border-b border-border last:border-none hover:bg-background-light transition-colors ${d.isAbsent ? 'opacity-60' : ''}`}>
+                          {showCol('employee') && (
                           <td className="px-5 py-3 font-bold text-text-dark">
                             {d.employeeName ?? '—'}
                             {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? t('workHours.corrected')}>✎</span>}
                           </td>
+                          )}
+                          {showCol('schedule') && (
                           <td className="px-5 py-3 text-text-light text-xs">
                             {d.isDayOff ? <span className="text-slate-400 italic">{t('workHours.dayOff')}</span> : (d.scheduleName ?? '—')}
                           </td>
-                          <td className="px-5 py-3 text-text-light font-mono text-xs">{d.shiftStart && d.shiftEnd ? `${d.shiftStart}–${d.shiftEnd}` : '—'}</td>
+                          )}
+                          {showCol('shift') && <td className="px-5 py-3 text-text-light font-mono text-xs">{d.shiftStart && d.shiftEnd ? `${d.shiftStart}–${d.shiftEnd}` : '—'}</td>}
+                          {showCol('checkIn') && (
                           <td className="px-5 py-3 font-mono">
                             {d.isDayOff ? <span className="text-slate-400">—</span>
                               : d.checkInUtc ? <span className="text-green-700">{formatTimeOnly(d.checkInUtc)}</span>
                               : d.onLeave ? <span className="text-indigo-600 font-bold" title={d.leaveType ?? undefined}>{t(d.leaveType === 'DayOff' ? 'workHours.onDayOff' : 'workHours.onLeave')}</span>
                               : <span className="text-error-text font-bold">{t('workHours.absent')}</span>}
                           </td>
-                          <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>
+                          )}
+                          {showCol('checkOut') && <td className="px-5 py-3 font-mono">{d.checkOutUtc ? <span className="text-blue-700">{formatTimeOnly(d.checkOutUtc)}</span> : <span className="text-text-light">—</span>}</td>}
+                          {showCol('hours') && (
                           <td className="px-5 py-3 text-right font-mono text-text-dark">
                             {d.totalHours > 0 ? formatHM(d.totalHours) : <span className="text-text-light">—</span>}
                             {(d.permissionHours ?? 0) > 0 && (
@@ -1702,10 +1824,11 @@ useEffect(() => {
                               </span>
                             )}
                           </td>
-                          <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>
-                          <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesHM(d.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(d.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
-                          <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
+                          )}
+                          {showCol('norm') && <td className="px-5 py-3 text-right font-mono text-text-light">{d.normHours > 0 ? formatHM(d.normHours) : '—'}</td>}
+                          {showCol('late') && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesHM(d.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>}
+                          {showCol('early') && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(d.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>}
+                          {showCol('overtime') && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
                           <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                             <button type="button" onClick={() => openPermission(d)} className={`text-[10px] font-black uppercase tracking-wider hover:underline ${(d.permissionHours ?? 0) > 0 ? 'text-sky-600' : 'text-text-light'}`}>
@@ -1718,6 +1841,7 @@ useEffect(() => {
                   </table>
                 </div>
               )}
+              {!loading && <Pagination page={pagedDaily.page} totalPages={pagedDaily.totalPages} total={filteredDaily.length} onPage={setDailyPage} />}
             </div>
             )
           })()}
@@ -1738,6 +1862,8 @@ useEffect(() => {
                 visibleRows: subTab === 'all' ? emp.rows : emp.rows.filter(r => rowMatchesSubTab(r, subTab)),
               }))
               .filter(emp => emp.visibleRows.length > 0)
+            // Səhifədə 50 işçi bloku (hər blok — bir işçinin cədvəli).
+            const pagedEmps = pageSlice(filteredEmps, periodPage)
 
             return (
               <div className="space-y-4">
@@ -1759,7 +1885,7 @@ useEffect(() => {
                     <p className="text-sm">{t('workHours.noEmployeesMatchFilter')}</p>
                   </div>
                 ) : (
-                  filteredEmps.map((emp) => {
+                  pagedEmps.rows.map((emp) => {
                     const workRows = emp.rows.filter(r => !r.isDayOff)
                     const present = workRows.filter(r => r.checkInUtc).length
                     const absent = workRows.filter(r => r.isAbsent).length
@@ -1831,6 +1957,11 @@ useEffect(() => {
                     )
                   })
                 )}
+                {!loading && pagedEmps.totalPages > 1 && (
+                  <div className="bg-surface rounded-2xl shadow-sm">
+                    <Pagination page={pagedEmps.page} totalPages={pagedEmps.totalPages} total={filteredEmps.length} onPage={setPeriodPage} bordered={false} />
+                  </div>
+                )}
               </div>
             )
           })()}
@@ -1855,6 +1986,7 @@ useEffect(() => {
                   const leavesFiltered = leaves.filter(lv =>
                     (!q || lv.employeeName.toLowerCase().includes(q)) &&
                     (!leaveDept || lv.department === leaveDept))
+                  const pagedLeaves = pageSlice(leavesFiltered, leavesPage)
                   return (
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
@@ -1900,7 +2032,7 @@ useEffect(() => {
                           </tr>
                         </thead>
                         <tbody>
-                          {leavesFiltered.map((lv) => (
+                          {pagedLeaves.rows.map((lv) => (
                             <tr key={lv.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                               <td className="px-5 py-3 font-bold text-text-dark">
                                 <p>{lv.employeeName}</p>
@@ -1961,6 +2093,7 @@ useEffect(() => {
                       </table>
                     </div>
                   )}
+                  {!leavesLoading && <Pagination page={pagedLeaves.page} totalPages={pagedLeaves.totalPages} total={leavesFiltered.length} onPage={setLeavesPage} />}
                 </div>
                   )
                 })()}
@@ -1975,6 +2108,7 @@ useEffect(() => {
                 <div className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                   {(() => {
                     const ssFiltered = selfServiceReqs.filter((r) => r.status === ssTab)
+                    const pagedSs = pageSlice(ssFiltered, ssPage)
                     const ssCount = (s: 'Pending' | 'Approved' | 'Rejected') => selfServiceReqs.filter((r) => r.status === s).length
                     return (
                       <>
@@ -2020,7 +2154,7 @@ useEffect(() => {
                           </tr>
                         </thead>
                         <tbody>
-                          {ssFiltered.map((req) => (
+                          {pagedSs.rows.map((req) => (
                             <tr key={req.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                               <td className="px-5 py-3 font-bold text-text-dark">{req.employeeName}</td>
                               <td className="px-5 py-3">
@@ -2066,6 +2200,7 @@ useEffect(() => {
                       </table>
                     </div>
                   )}
+                  {!selfServiceLoading && <Pagination page={pagedSs.page} totalPages={pagedSs.totalPages} total={ssFiltered.length} onPage={setSsPage} />}
                       </>
                     )
                   })()}

@@ -61,7 +61,12 @@ interface PersonDetail {
   irises: { id: string; irisIndex: number }[]
   selfServiceEnabled?: boolean
   selfServiceEmail?: string | null
+  /** Приходит ТОЛЬКО в ответе на сохранение, когда аккаунт был создан именно сейчас (в GET его нет). */
   selfServiceTempPassword?: string | null
+  /** null — аккаунт не создавался; false — письмо с доступом не ушло, пароль нужно передать вручную. */
+  selfServiceEmailSent?: boolean | null
+  /** Ответ SMTP, когда письмо не ушло: без него причина видна только в консольном логе сервиса. */
+  selfServiceEmailError?: string | null
   workScheduleId?: string | null
   workScheduleName?: string | null
   /** 'employee' | 'resident' — жилец хранится в той же таблице, что и работник. */
@@ -146,7 +151,11 @@ export function PersonDetailPage() {
   // отличает его поле kind — оно же прячет отдел, должность, табель и смены.
   const isResident = formData.kind === 'resident'
   const [workSchedules, setWorkSchedules] = useState<WorkSchedule[]>([])
-  const [selfServiceTempPassword, setSelfServiceTempPassword] = useState<string | null>(null)
+  // Одноразовый показ выданного пароля: живёт только в состоянии страницы — после ухода
+  // или перезагрузки его уже не увидеть, сервер отдаёт пароль лишь в ответе на создание.
+  const [newSelfService, setNewSelfService] = useState<{ password: string; email: string; emailSent: boolean | null; emailError: string | null } | null>(null)
+  const [passwordCopied, setPasswordCopied] = useState(false)
+  const [selfServiceLoading, setSelfServiceLoading] = useState(false)
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyMode, setCompanyMode] = useState<'None' | 'Single' | 'Multiple'>('None')
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
@@ -290,9 +299,8 @@ export function PersonDetailPage() {
       apartment: detail.apartment ?? '',
       housingBlockId: detail.housingBlockId ?? null,
     })
-    if (detail.selfServiceTempPassword) {
-      setSelfServiceTempPassword(detail.selfServiceTempPassword)
-    }
+    // Пароль намеренно НЕ восстанавливаем из detail: в GET его нет и быть не должно —
+    // он показывается один раз, сразу после создания аккаунта (см. handleSave).
   }, [detail, companies, companyMode])
 
   function showSyncWarnings(res: { syncWarnings?: string[] | null }) {
@@ -320,6 +328,9 @@ export function PersonDetailPage() {
     setSyncWarning(null)
     setSaveLoading(true)
     setError(null)
+    // Пароль от прошлого создания убираем, чтобы его не приняли за новый.
+    setNewSelfService(null)
+    setPasswordCopied(false)
     setSyncProgress({
       syncId,
       current: 0,
@@ -396,8 +407,14 @@ export function PersonDetailPage() {
         })
         showSyncWarnings(res)
         setDetail(res)
-        if ((res as PersonDetail & { selfServiceTempPassword?: string }).selfServiceTempPassword) {
-          setSelfServiceTempPassword((res as PersonDetail & { selfServiceTempPassword?: string }).selfServiceTempPassword!)
+        // Аккаунт самообслуживания создан именно этим сохранением — показываем пароль один раз.
+        if (res.selfServiceTempPassword) {
+          setNewSelfService({
+            password: res.selfServiceTempPassword,
+            email: res.selfServiceEmail ?? formData.selfServiceEmail.trim(),
+            emailSent: res.selfServiceEmailSent ?? null,
+            emailError: res.selfServiceEmailError ?? null,
+          })
         }
       } else {
         const res = await apiRequest<PersonDetail & { syncWarnings?: string[] }>(`${apiPath}/${id}`, {
@@ -429,6 +446,41 @@ export function PersonDetailPage() {
       } catch {
         /* ignore */
       }
+    }
+  }
+
+  /**
+   * Выдать доступ к самообслуживанию: сервер создаёт аккаунт (или перевыпускает пароль
+   * существующему), шлёт письмо и возвращает новый пароль — показываем его один раз.
+   * Адрес берём из формы, поэтому сохранять карточку заранее не нужно.
+   */
+  async function handleSelfServiceAccess() {
+    if (!token || !id) return
+    const email = formData.selfServiceEmail.trim()
+    if (!email) return
+    setSelfServiceLoading(true)
+    setError(null)
+    setNewSelfService(null)
+    setPasswordCopied(false)
+    try {
+      const res = await apiRequest<{ selfServiceEmail: string; selfServiceTempPassword: string; selfServiceEmailSent: boolean; selfServiceEmailError?: string | null }>(
+        `/api/employees/${id}/self-service`,
+        { method: 'POST', token, body: JSON.stringify({ email }) },
+      )
+      setNewSelfService({
+        password: res.selfServiceTempPassword,
+        email: res.selfServiceEmail,
+        emailSent: res.selfServiceEmailSent,
+        emailError: res.selfServiceEmailError ?? null,
+      })
+      // Сервер включил самообслуживание и зафиксировал адрес — отражаем это в карточке,
+      // чтобы кнопка сразу стала «перевыпустить», а повторное сохранение ничего не сбросило.
+      setFormData((p) => ({ ...p, selfServiceEnabled: true, selfServiceEmail: res.selfServiceEmail }))
+      setDetail((d) => (d ? { ...d, selfServiceEnabled: true, selfServiceEmail: res.selfServiceEmail } : d))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('personDetail.errors.saveFailed'))
+    } finally {
+      setSelfServiceLoading(false)
     }
   }
 
@@ -787,17 +839,81 @@ export function PersonDetailPage() {
                         />
                         <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-light text-base">alternate_email</span>
                       </div>
+
+                      {/* Выдача доступа отдельной кнопкой: каждое нажатие выпускает НОВЫЙ пароль
+                          (старый перестаёт работать) и показывает его здесь же. */}
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleSelfServiceAccess}
+                          disabled={selfServiceLoading || !formData.selfServiceEmail.trim()}
+                          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-500 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {selfServiceLoading
+                            ? <span className="spinner-ring text-base" aria-hidden="true" />
+                            : <span className="material-symbols-outlined text-base">{detail.selfServiceEnabled ? 'lock_reset' : 'person_add'}</span>}
+                          {detail.selfServiceEnabled
+                            ? t('personDetail.resetSelfServicePassword')
+                            : t('personDetail.createSelfService')}
+                        </button>
+                        <p className="text-[10px] text-text-light leading-relaxed flex-1 min-w-[180px]">
+                          {detail.selfServiceEnabled
+                            ? t('personDetail.resetSelfServiceHint')
+                            : t('personDetail.createSelfServiceHint')}
+                        </p>
+                      </div>
                     </div>
                   )}
 
-                  {selfServiceTempPassword && (
-                    <div className="p-3 bg-green-50 rounded-xl border border-green-200 space-y-1">
-                      <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">{t('personDetail.accountCreated')}</p>
-                      <p className="text-xs text-green-700">{t('personDetail.temporaryPassword')} <span className="font-mono font-bold">{selfServiceTempPassword}</span></p>
+                  {/* Одноразовый показ: пароль есть только в ответе на создание, после ухода со страницы его не вернуть. */}
+                  {newSelfService && (
+                    <div className="p-4 bg-green-50 rounded-2xl border border-green-200 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-green-600 text-lg">check_circle</span>
+                        <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">{t('personDetail.accountCreated')}</p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">{t('personDetail.temporaryPassword')}</p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-white border border-green-200 font-mono text-sm font-bold text-text-dark break-all select-all">
+                            {newSelfService.password}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(newSelfService.password)
+                                .then(() => setPasswordCopied(true))
+                                .catch(() => { /* буфер недоступен — пароль можно выделить вручную */ })
+                            }}
+                            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-green-700 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">{passwordCopied ? 'check' : 'content_copy'}</span>
+                            {passwordCopied ? t('personDetail.passwordCopied') : t('personDetail.copyPassword')}
+                          </button>
+                        </div>
+                      </div>
+
+                      {newSelfService.emailSent === false ? (
+                        <div className="space-y-1">
+                          <p className="text-[11px] font-bold text-amber-700">{t('personDetail.credentialsEmailFailed')}</p>
+                          {/* Точный ответ SMTP: логи сервиса идут только в консоль, поэтому без этой
+                              строки администратор не узнает, почему письмо не ушло. */}
+                          {newSelfService.emailError && (
+                            <p className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 font-mono text-[10px] text-amber-800 break-words">
+                              {newSelfService.emailError}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] font-bold text-green-700">
+                          {t('personDetail.credentialsEmailSent', { email: newSelfService.email })}
+                        </p>
+                      )}
                       <p className="text-[10px] text-green-600">{t('personDetail.savePasswordHint')}</p>
                       <button
                         type="button"
-                        onClick={() => setSelfServiceTempPassword(null)}
+                        onClick={() => { setNewSelfService(null); setPasswordCopied(false) }}
                         className="text-[10px] text-green-500 underline"
                       >{t('common.close')}</button>
                     </div>

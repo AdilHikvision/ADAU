@@ -7,3 +7,5 @@ export { NavItem } from './NavItem';
 export { AlertMessage } from './AlertMessage';
 export { ConfirmDialog } from './ConfirmDialog';
 export { NotificationBell } from './NotificationBell';
+export { Pagination } from './Pagination';
+export { usePageReset, pageSlice, PAGE_SIZE } from './Pagination/paging';

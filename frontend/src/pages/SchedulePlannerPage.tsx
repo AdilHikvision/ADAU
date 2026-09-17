@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
+import { Pagination, usePageReset, pageSlice } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 
@@ -364,6 +365,9 @@ export function SchedulePlannerPage() {
     const filtered = (data?.employees ?? []).filter(e =>
         e.employeeName.toLowerCase().includes(search.toLowerCase())
     )
+    // Сетка широкая, поэтому сотрудников листаем страницами; поиск и период возвращают на первую.
+    const [page, setPage] = usePageReset(`${search}|${rangeFrom}|${rangeTo}`)
+    const pagedEmployees = pageSlice(filtered, page)
 
     const schedules = data?.schedules ?? []
 
@@ -595,7 +599,7 @@ export function SchedulePlannerPage() {
                                                 : t('schedulePlanner.noEmployeesMatch')}
                                         </td>
                                     </tr>
-                                ) : filtered.map((emp, idx) => {
+                                ) : pagedEmployees.rows.map((emp, idx) => {
                                     const { days: wDays, hours: wHours } = computeTotals(emp)
                                     const hasPending = (pendingByEmp[emp.employeeId]?.length ?? 0) > 0
                                     const isSaving = savingEmpId === emp.employeeId
@@ -722,6 +726,11 @@ export function SchedulePlannerPage() {
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                )}
+                {!loading && !fetchError && pagedEmployees.totalPages > 1 && (
+                    <div className="bg-surface border-t border-black/[0.07]">
+                        <Pagination page={pagedEmployees.page} totalPages={pagedEmployees.totalPages} total={filtered.length} onPage={setPage} bordered={false} />
                     </div>
                 )}
             </div>

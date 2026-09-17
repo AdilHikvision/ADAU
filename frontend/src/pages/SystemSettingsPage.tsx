@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
-import { Button, Input } from '../components/atoms'
+import { Button, Input, Toggle } from '../components/atoms'
 import { Modal, PageHeader } from '../components/organisms'
 import { CompanyTab } from './CompanyTab'
 import { HousingTab } from './HousingTab'
@@ -29,6 +29,12 @@ const STG_RESTYLE = `
 .stg-page table tbody tr:hover{background:var(--ap-acc-softer)!important}
 .stg-page input:focus,.stg-page select:focus,.stg-page textarea:focus{border-color:var(--ap-acc)!important;box-shadow:0 0 0 3px var(--ap-acc-soft)!important}
 .stg-page .shadow-primary{box-shadow:0 6px 16px rgba(108,92,231,.28)!important}
+/* Вкладок много — горизонтальный скролл живёт внутри самой ленты вкладок,
+   поэтому страница целиком больше не едет вбок. Полоса тонкая (глобальная — 10px). */
+.stg-page .stg-tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:#d8d4e6 transparent;overscroll-behavior-x:contain}
+.stg-page .stg-tabs::-webkit-scrollbar{height:6px}
+.stg-page .stg-tabs::-webkit-scrollbar-thumb{background:#d8d4e6;border:none;border-radius:999px}
+.stg-page .stg-tabs::-webkit-scrollbar-thumb:hover{background:#bcb5d4;border:none}
 `
 
 type SettingsTab = 'global' | 'criteria' | 'devices' | 'company' | 'housing' | 'logSync' | 'email' | 'assistant' | 'templates' | 'users' | 'roles' | 'debugLogs'
@@ -59,6 +65,7 @@ export function SystemSettingsPage() {
     const { activeModule } = useModule()
     const isHousing = activeModule === 'housing'
     const devicesRef = useRef<{ triggerAction: () => void } | null>(null)
+    const tabsRef = useRef<HTMLDivElement>(null)
     const { token, user: currentUser } = useAuth()
     const { startLoading, stopLoading } = useLoading()
     const [companyMode, setCompanyMode] = useState<'Single' | 'Multiple' | 'None'>('None')
@@ -82,6 +89,14 @@ export function SystemSettingsPage() {
         else if (tab === 'debug-logs') setActiveTab('debugLogs')
         else if (tab === 'criteria') setActiveTab('criteria')
     }, [location.search])
+
+    // Активная вкладка может оказаться за правым краем ленты — подтягиваем её в видимую часть.
+    // block:'nearest' — чтобы страница при этом не прыгала по вертикали.
+    useEffect(() => {
+        tabsRef.current
+            ?.querySelector<HTMLElement>('[data-active="true"]')
+            ?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+    }, [activeTab])
 
     // ─── Localization & Runtime: time/timezone push to devices ───
     // POSIX-style strings as Hikvision ISAPI accepts (sign inverted relative to UTC).
@@ -506,16 +521,21 @@ export function SystemSettingsPage() {
     }
 
     // ─── SMTP Settings ────────────────────────────────────────────────────────
+    // Пароль сервер наружу не отдаёт: приходит пустая строка и признак hasPassword.
+    // Пока поле не тронули, отправляем password: null — «оставить сохранённый».
     const [smtp, setSmtp] = useState({
         enabled: false,
         host: '',
         port: 587,
         username: '',
         password: '',
+        hasPassword: false,
         fromAddress: '',
         fromName: '',
         enableSsl: true,
     })
+    const [smtpPasswordTouched, setSmtpPasswordTouched] = useState(false)
+    const smtpPayload = () => ({ ...smtp, password: smtpPasswordTouched ? smtp.password : null })
     const [smtpLoading, setSmtpLoading] = useState(false)
     const [smtpSaving, setSmtpSaving] = useState(false)
     const [smtpTesting, setSmtpTesting] = useState(false)
@@ -528,6 +548,7 @@ export function SystemSettingsPage() {
         try {
             const data = await apiRequest<typeof smtp>('/api/settings/smtp', { token })
             setSmtp(data)
+            setSmtpPasswordTouched(false)
         } catch { /* ignore */ } finally { setSmtpLoading(false) }
     }, [token])
 
@@ -541,8 +562,10 @@ export function SystemSettingsPage() {
         setSmtpSaving(true)
         setSmtpTestResult(null)
         try {
-            await apiRequest('/api/settings/smtp', { method: 'PUT', token, body: JSON.stringify(smtp) })
+            await apiRequest('/api/settings/smtp', { method: 'PUT', token, body: JSON.stringify(smtpPayload()) })
             alert(t('systemSettings.alerts.smtpSaved'))
+            // Перечитываем: поле пароля снова пустое, hasPassword — актуальный.
+            await loadSmtp()
         } catch (e) {
             alert(e instanceof Error ? e.message : t('systemSettings.errors.saveFailed'))
         } finally { setSmtpSaving(false) }
@@ -556,7 +579,7 @@ export function SystemSettingsPage() {
             const res = await apiRequest<{ message: string }>('/api/settings/smtp/test', {
                 method: 'POST',
                 token,
-                body: JSON.stringify({ ...smtp, to: smtpTestTo }),
+                body: JSON.stringify({ ...smtpPayload(), to: smtpTestTo }),
             })
             setSmtpTestResult({ ok: true, message: res.message })
         } catch (e) {
@@ -565,12 +588,17 @@ export function SystemSettingsPage() {
     }
 
     // ─── AI Assistant Settings ────────────────────────────────────────────────
+    // Ключ, как и пароль SMTP, наружу не отдаётся: приходит пустая строка + hasApiKey,
+    // а нетронутое поле уходит как null («оставить сохранённый»).
     const [assistant, setAssistant] = useState({
         enabled: false,
         apiKey: '',
+        hasApiKey: false,
         model: '',
         baseUrl: '',
     })
+    const [assistantKeyTouched, setAssistantKeyTouched] = useState(false)
+    const assistantPayload = () => ({ ...assistant, apiKey: assistantKeyTouched ? assistant.apiKey : null })
     const [assistantLoading, setAssistantLoading] = useState(false)
     const [assistantSaving, setAssistantSaving] = useState(false)
     const [assistantTesting, setAssistantTesting] = useState(false)
@@ -582,6 +610,7 @@ export function SystemSettingsPage() {
         try {
             const data = await apiRequest<typeof assistant>('/api/settings/assistant', { token })
             setAssistant(data)
+            setAssistantKeyTouched(false)
         } catch { /* ignore */ } finally { setAssistantLoading(false) }
     }, [token])
 
@@ -595,8 +624,10 @@ export function SystemSettingsPage() {
         setAssistantSaving(true)
         setAssistantTestResult(null)
         try {
-            await apiRequest('/api/settings/assistant', { method: 'PUT', token, body: JSON.stringify(assistant) })
+            await apiRequest('/api/settings/assistant', { method: 'PUT', token, body: JSON.stringify(assistantPayload()) })
             setAssistantTestResult({ ok: true, message: t('settingsAssistant.saved') })
+            // Перечитываем: поле ключа снова пустое, hasApiKey — актуальный.
+            await loadAssistant()
         } catch (e) {
             setAssistantTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.saveFailed') })
         } finally { setAssistantSaving(false) }
@@ -607,7 +638,7 @@ export function SystemSettingsPage() {
         setAssistantTesting(true)
         setAssistantTestResult(null)
         try {
-            const res = await apiRequest<{ message: string }>('/api/settings/assistant/test', { method: 'POST', token, body: JSON.stringify(assistant) })
+            const res = await apiRequest<{ message: string }>('/api/settings/assistant/test', { method: 'POST', token, body: JSON.stringify(assistantPayload()) })
             setAssistantTestResult({ ok: true, message: res.message })
         } catch (e) {
             setAssistantTestResult({ ok: false, message: e instanceof Error ? e.message : t('systemSettings.errors.testFailed') })
@@ -1017,6 +1048,25 @@ export function SystemSettingsPage() {
         }
     }
 
+    // Вкладки одним списком: их много, лента прокручивается горизонтально,
+    // а активная вкладка подтягивается в видимую часть (в т.ч. при заходе по ?tab=…).
+    const tabItems: { key: SettingsTab; label: string }[] = [
+        { key: 'global', label: t('systemSettings.tabs.global') },
+        { key: 'criteria', label: t('systemSettings.tabs.criteria') },
+        { key: 'company', label: t('systemSettings.tabs.company') },
+        ...(isHousing ? [{ key: 'housing' as const, label: t('systemSettings.tabs.housing') }] : []),
+        { key: 'devices', label: t('systemSettings.tabs.devices') },
+        { key: 'logSync', label: t('systemSettings.tabs.logSync') },
+        { key: 'email', label: t('systemSettings.tabs.email') },
+        { key: 'assistant', label: t('settingsAssistant.tab') },
+        { key: 'templates', label: t('systemSettings.tabs.templates') },
+        ...(isAdmin ? [
+            { key: 'users' as const, label: t('systemSettings.tabs.users') },
+            { key: 'roles' as const, label: t('systemSettings.tabs.roles') },
+            { key: 'debugLogs' as const, label: t('systemSettings.tabs.debugLogs') },
+        ] : []),
+    ]
+
     return (
         <AppLayout onAction={handleAction}>
             <style>{STG_RESTYLE}</style>
@@ -1028,98 +1078,20 @@ export function SystemSettingsPage() {
                         description={t('systemSettings.pageDescription')}
                     />
 
-                    {/* Tab Navigation */}
-                    <div className="flex gap-8 border-b border-divider-light">
-                        <button
-                            onClick={() => setActiveTab('global')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'global' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.global')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('criteria')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'criteria' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.criteria')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('company')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'company' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.company')}
-                        </button>
-                        {isHousing && (
+                    {/* Tab Navigation — лента скроллится сама, страница вбок не едет */}
+                    <div ref={tabsRef} className="stg-tabs flex gap-8 border-b border-divider-light">
+                        {tabItems.map((tb) => (
                             <button
-                                onClick={() => setActiveTab('housing')}
-                                className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'housing' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
+                                key={tb.key}
+                                type="button"
+                                data-active={activeTab === tb.key}
+                                onClick={() => setActiveTab(tb.key)}
+                                className={`shrink-0 whitespace-nowrap pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === tb.key ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
                                     }`}
                             >
-                                {t('systemSettings.tabs.housing')}
+                                {tb.label}
                             </button>
-                        )}
-                        <button
-                            onClick={() => setActiveTab('devices')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'devices' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.devices')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('logSync')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'logSync' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.logSync')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('email')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'email' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.email')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('assistant')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'assistant' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('settingsAssistant.tab')}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('templates')}
-                            className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'templates' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                }`}
-                        >
-                            {t('systemSettings.tabs.templates')}
-                        </button>
-                        {isAdmin && (
-                            <>
-                                <button
-                                    onClick={() => setActiveTab('users')}
-                                    className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'users' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                        }`}
-                                >
-                                    {t('systemSettings.tabs.users')}
-                                </button>
-                                <button
-                                    onClick={() => setActiveTab('roles')}
-                                    className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'roles' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                        }`}
-                                >
-                                    {t('systemSettings.tabs.roles')}
-                                </button>
-                                <button
-                                    onClick={() => setActiveTab('debugLogs')}
-                                    className={`pb-4 text-[11px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'debugLogs' ? 'border-primary text-primary' : 'border-transparent text-text-light hover:text-text-muted'
-                                        }`}
-                                >
-                                    {t('systemSettings.tabs.debugLogs')}
-                                </button>
-                            </>
-                        )}
+                        ))}
                     </div>
 
                     {activeTab === 'global' ? (
@@ -1593,12 +1565,11 @@ export function SystemSettingsPage() {
                                             <p className="text-xs font-black text-text-dark">{t('systemSettings.smtp.enable')}</p>
                                             <p className="text-[9px] text-text-light uppercase tracking-widest mt-0.5">{t('systemSettings.smtp.enableDesc')}</p>
                                         </div>
-                                        <button
-                                            onClick={() => setSmtp(s => ({ ...s, enabled: !s.enabled }))}
-                                            className={`relative w-12 h-6 rounded-full transition-colors ${smtp.enabled ? 'bg-primary' : 'bg-slate-200'}`}
-                                        >
-                                            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${smtp.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
-                                        </button>
+                                        <Toggle
+                                            checked={smtp.enabled}
+                                            onChange={(v) => setSmtp(s => ({ ...s, enabled: v }))}
+                                            aria-label={t('systemSettings.smtp.enable')}
+                                        />
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -1616,7 +1587,12 @@ export function SystemSettingsPage() {
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.password')}</label>
-                                            <Input type="password" placeholder="••••••••" value={smtp.password} onChange={e => setSmtp(s => ({ ...s, password: e.target.value }))} />
+                                            <Input
+                                                type="password"
+                                                placeholder={smtp.hasPassword && !smtpPasswordTouched ? t('systemSettings.smtp.passwordSaved') : '••••••••'}
+                                                value={smtp.password}
+                                                onChange={e => { setSmtpPasswordTouched(true); setSmtp(s => ({ ...s, password: e.target.value })) }}
+                                            />
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('systemSettings.smtp.fromAddress')}</label>
@@ -1629,12 +1605,12 @@ export function SystemSettingsPage() {
                                     </div>
 
                                     <div className="flex items-center gap-3">
-                                        <button
-                                            onClick={() => setSmtp(s => ({ ...s, enableSsl: !s.enableSsl }))}
-                                            className={`relative w-10 h-5 rounded-full transition-colors ${smtp.enableSsl ? 'bg-primary' : 'bg-slate-200'}`}
-                                        >
-                                            <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${smtp.enableSsl ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                                        </button>
+                                        <Toggle
+                                            size="sm"
+                                            checked={smtp.enableSsl}
+                                            onChange={(v) => setSmtp(s => ({ ...s, enableSsl: v }))}
+                                            aria-label={t('systemSettings.smtp.enableSsl')}
+                                        />
                                         <span className="text-xs font-bold text-text-dark">{t('systemSettings.smtp.enableSsl')}</span>
                                     </div>
 
@@ -1685,18 +1661,22 @@ export function SystemSettingsPage() {
                                         <div>
                                             <p className="text-xs font-black text-text-dark">{t('settingsAssistant.enabled')}</p>
                                         </div>
-                                        <button
-                                            onClick={() => setAssistant(s => ({ ...s, enabled: !s.enabled }))}
-                                            className={`relative w-12 h-6 rounded-full transition-colors ${assistant.enabled ? 'bg-primary' : 'bg-slate-200'}`}
-                                        >
-                                            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${assistant.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
-                                        </button>
+                                        <Toggle
+                                            checked={assistant.enabled}
+                                            onChange={(v) => setAssistant(s => ({ ...s, enabled: v }))}
+                                            aria-label={t('settingsAssistant.enabled')}
+                                        />
                                     </div>
 
                                     <div className="grid grid-cols-1 gap-5">
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('settingsAssistant.apiKey')}</label>
-                                            <Input type="password" placeholder="sk-or-..." value={assistant.apiKey} onChange={e => setAssistant(s => ({ ...s, apiKey: e.target.value }))} />
+                                            <Input
+                                                type="password"
+                                                placeholder={assistant.hasApiKey && !assistantKeyTouched ? t('settingsAssistant.apiKeySaved') : 'sk-or-...'}
+                                                value={assistant.apiKey}
+                                                onChange={e => { setAssistantKeyTouched(true); setAssistant(s => ({ ...s, apiKey: e.target.value })) }}
+                                            />
                                             <p className="text-[10px] text-text-muted">{t('settingsAssistant.apiKeyHint')}</p>
                                         </div>
                                         <div className="space-y-2">

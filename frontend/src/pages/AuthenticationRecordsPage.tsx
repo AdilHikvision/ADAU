@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Spinner } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
+import { Pagination, usePageReset, pageSlice } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import { useModule } from '../context/ModuleContext'
@@ -97,6 +98,8 @@ export function AuthenticationRecordsPage() {
   const [blocks, setBlocks] = useState<HousingBlockItem[]>([])
 
   const [records, setRecords] = useState<AuthRecord[]>([])
+  // Проходов за день бывают тысячи — режем на страницы; смена фильтров возвращает на первую.
+  const [page, setPage] = usePageReset(`${kind}|${date}|${personId}|${deptId}|${blockId}`)
   const [error, setError] = useState<string | null>(null)
   // Кнопка «Обновить» перезапрашивает те же фильтры — меняем счётчик, а не состояние загрузки.
   const [reloadTick, setReloadTick] = useState(0)
@@ -316,7 +319,10 @@ export function AuthenticationRecordsPage() {
                 <span className="material-symbols-outlined text-4xl">fingerprint</span>
                 <p className="text-sm">{t('authRecords.empty')}</p>
               </div>
-            ) : (
+            ) : (() => {
+              const paged = pageSlice(records, page)
+              return (
+              <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -328,7 +334,7 @@ export function AuthenticationRecordsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {records.map((r) => (
+                    {paged.rows.map((r) => (
                       <tr key={r.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                         <td className="px-5 py-3 font-bold text-text-dark">
                           {r.firstName} {r.lastName}
@@ -342,7 +348,10 @@ export function AuthenticationRecordsPage() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination page={paged.page} totalPages={paged.totalPages} total={records.length} onPage={setPage} />
+              </>
+              )
+            })()}
           </div>
 
           {/* Person picker: слева отделы (в ЖКХ — блоки), справа поиск и люди */}

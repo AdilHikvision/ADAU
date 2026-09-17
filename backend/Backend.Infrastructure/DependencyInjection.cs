@@ -53,7 +53,10 @@ public static class DependencyInjection
         services
             .AddIdentityCore<ApplicationUser>()
             .AddRoles<IdentityRole<Guid>>()
-            .AddEntityFrameworkStores<AppDbContext>();
+            .AddEntityFrameworkStores<AppDbContext>()
+            // Без token-провайдеров GeneratePasswordResetTokenAsync бросает NotSupportedException:
+            // ломались восстановление пароля по почте и смена пароля пользователю из настроек.
+            .AddDefaultTokenProviders();
 
         services.AddSingleton<SadpDiscoveryService>();
         services.AddSingleton<HikvisionSdkClient>();
