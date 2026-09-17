@@ -84,7 +84,9 @@ public static class AssistantChatEndpoints
             return Results.Ok(new
             {
                 enabled = cfg.Enabled,
-                apiKey = cfg.ApiKey,
+                // Ключ наружу не отдаём — только признак, что он задан (в БД или в appsettings/env).
+                apiKey = "",
+                hasApiKey = !string.IsNullOrWhiteSpace(cfg.ApiKey),
                 model = cfg.Model,
                 baseUrl = cfg.BaseUrl,
             });
@@ -94,7 +96,9 @@ public static class AssistantChatEndpoints
             AssistantSettingsRequest request, AppDbContext db, CancellationToken ct) =>
         {
             await UpsertSettingAsync(db, "Assistant:Enabled", request.Enabled ? "true" : "false", ct);
-            await UpsertSettingAsync(db, "Assistant:ApiKey", request.ApiKey?.Trim() ?? "", ct);
+            // null — «не менять» (форма ключа не видит), пустая строка — осознанная очистка.
+            if (request.ApiKey is not null)
+                await UpsertSettingAsync(db, "Assistant:ApiKey", request.ApiKey.Trim(), ct);
             await UpsertSettingAsync(db, "Assistant:Model", request.Model?.Trim() ?? "", ct);
             await UpsertSettingAsync(db, "Assistant:BaseUrl", request.BaseUrl?.Trim() ?? "", ct);
             await db.SaveChangesAsync(ct);

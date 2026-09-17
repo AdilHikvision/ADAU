@@ -25,7 +25,7 @@ Authorization: Bearer <token>
 | GET | `/api/self-service/attendance` | История посещаемости (фильтр по диапазону) |
 | GET | `/api/self-service/schedule` | Рабочий график + посещения на диапазон (данные календаря-планера) |
 | GET | `/api/self-service/requests` | Список заявок (последние 50) |
-| POST | `/api/self-service/requests` | Создать заявку (check-in / check-out / absence / vacation; overtime отклоняется) |
+| POST | `/api/self-service/requests` | Создать заявку (check-in / check-out / почасовая отлучка / absence / vacation; overtime отклоняется) |
 | DELETE | `/api/self-service/requests/{id}` | Отменить Pending заявку |
 | GET | `/api/self-service/leaves` | Список отпусков сотрудника |
 | POST | `/api/self-service/leaves` | Подать запрос на отпуск |
@@ -311,13 +311,38 @@ Authorization: Bearer <token>
 | `latitude` | нет | Широта (для геопроверки) |
 | `longitude` | нет | Долгота (для геопроверки) |
 
-> **Примечание.** Портал отправляет сюда только корректировки времени (`CheckIn`/`CheckOut`).
-> Отпуск (`Vacation`) и отгул/отсутствие (`Absence` → `DayOff`) теперь подаются как **leave** через
+> **Примечание.** Портал отправляет сюда корректировки времени (`CheckIn`/`CheckOut`) и
+> почасовые отлучки (`Absence` с `requestedEndTimeUtc`, см. ниже).
+> Отпуск (`Vacation`) и отгул на целый день (`Absence` → `DayOff`) подаются как **leave** через
 > `POST /api/self-service/leaves` — это создаёт `EmployeeLeave`, который после одобрения отображается
-> в отчётах и календаре. Эндпоинт `/requests` по-прежнему принимает `Absence`/`Vacation` (создаёт
-> `AttendanceRequest`), но такие заявки в отчётах как отпуск **не** отображаются.
+> в отчётах и календаре. Эндпоинт `/requests` по-прежнему принимает `Absence`/`Vacation` без
+> `requestedEndTimeUtc` (создаёт `AttendanceRequest`), но такие заявки в отчётах как отпуск **не**
+> отображаются.
 
-**Автоматическое одобрение:** если тип `CheckIn`/`CheckOut` и координаты попадают в радиус активной геозоны — заявка автоматически получает статус `Approved` и создаётся `AttendanceCorrection`.
+#### Почасовая отлучка (icazə)
+
+`Absence` с заполненным `requestedEndTimeUtc` — это заявка на отсутствие в течение нескольких
+часов одного дня. Обе границы должны попадать в одни локальные сутки сервера, `requestedEndTimeUtc`
+строго больше `requestedTimeUtc`.
+
+После одобрения (`PUT /api/attendance-requests/{id}/approve`) создаётся `AttendancePermission` на
+эту дату с `showInReport = true`, и часы отлучки вычитаются из отработанного времени в дневном
+отчёте и в отчёте за период. `AttendancePermission` уникален по `(EmployeeId, Date)` — одобрение
+второй заявки на ту же дату **перезаписывает** интервал.
+
+```json
+{
+  "type": "Absence",
+  "requestedTimeUtc": "2026-05-19T09:00:00Z",
+  "requestedEndTimeUtc": "2026-05-19T11:00:00Z",
+  "comment": "Приём у врача"
+}
+```
+
+**Уведомления:** заявки типа `Absence` и `Vacation` рассылаются согласующим как
+`ApprovalRequest` (`CheckIn`/`CheckOut` — нет, их поток не менялся).
+
+**Автоматическое одобрение:** если тип `CheckIn`/`CheckOut` и координаты попадают в радиус активной геозоны — заявка автоматически получает статус `Approved` и создаётся `AttendanceCorrection`. На `Absence` геоавтоодобрение не распространяется.
 
 **Response 201:**
 ```json
@@ -325,6 +350,7 @@ Authorization: Bearer <token>
   "id": "uuid",
   "type": "CheckIn",
   "requestedTimeUtc": "2026-05-19T07:00:00Z",
+  "requestedEndTimeUtc": null,
   "status": "Approved",
   "autoApproved": true,
   "matchedZone": "Офис"
@@ -334,6 +360,8 @@ Authorization: Bearer <token>
 **Response 400:**
 - `{ "message": "Invalid request type." }`
 - `{ "message": "Overtime requests are not available in self-service." }` — тип `Overtime` в self-service запрещён.
+- `{ "message": "requestedEndTimeUtc must be after requestedTimeUtc." }` — пустой или обратный интервал отлучки.
+- `{ "message": "Hourly absence must start and end on the same day." }` — отлучка не умещается в одни сутки.
 
 ---
 
@@ -474,7 +502,14 @@ Authorization: Bearer <token>
 
 ### GET /api/self-service/notifications
 
-Последние 50 уведомлений (личные + broadcast).
+Последние 50 уведомлений, адресованных **лично сотруднику**: `ApprovalApproved`
+и `ApprovalRejected` по его заявкам и отпускам. Всегда `isBroadcast: false`.
+
+Рассылка (`UserId == null`) — `DailyReport`, `DeviceOffline`, парковочные
+события и `ApprovalRequest` («сотрудник подал заявку») — адресована
+администраторам и согласующим и отдаётся только через `/api/notifications`.
+`unread-count` и `read-all` в self-service работают по тому же набору, поэтому
+счётчик непрочитанных всегда совпадает со списком.
 
 **Response 200:**
 ```json

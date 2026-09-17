@@ -3,13 +3,21 @@ using Backend.Infrastructure.Persistence;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
+/// <remarks>
+/// Про <c>includeBroadcasts</c>: уведомления с <c>UserId == null</c> — это рассылка
+/// администраторам и согласующим (ежедневный отчёт, парковка, устройство offline,
+/// «сотрудник подал заявку»). Админ-панель их показывает, self-service — нет:
+/// сотруднику адресованы только персональные уведомления об одобрении и отклонении
+/// его собственных заявок. Поэтому эндпоинты /api/self-service/notifications/*
+/// передают сюда <c>includeBroadcasts: false</c>.
+/// </remarks>
 public interface INotificationService
 {
     Task CreateAsync(string type, string title, string body, Guid? userId = null, string? referenceId = null, CancellationToken ct = default);
-    Task<List<AppNotificationDto>> GetForUserAsync(Guid userId, int limit = 50, CancellationToken ct = default);
-    Task<int> GetUnreadCountAsync(Guid userId, CancellationToken ct = default);
-    Task MarkReadAsync(Guid notificationId, Guid userId, CancellationToken ct = default);
-    Task MarkAllReadAsync(Guid userId, CancellationToken ct = default);
+    Task<List<AppNotificationDto>> GetForUserAsync(Guid userId, int limit = 50, bool includeBroadcasts = true, CancellationToken ct = default);
+    Task<int> GetUnreadCountAsync(Guid userId, bool includeBroadcasts = true, CancellationToken ct = default);
+    Task MarkReadAsync(Guid notificationId, Guid userId, bool includeBroadcasts = true, CancellationToken ct = default);
+    Task MarkAllReadAsync(Guid userId, bool includeBroadcasts = true, CancellationToken ct = default);
 }
 
 public sealed record AppNotificationDto(
@@ -49,7 +57,7 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
             await hub.Clients.User(userId.ToString()!).SendAsync("ReceiveNotification", dto, ct);
     }
 
-    public async Task<List<AppNotificationDto>> GetForUserAsync(Guid userId, int limit = 50, CancellationToken ct = default)
+    public async Task<List<AppNotificationDto>> GetForUserAsync(Guid userId, int limit = 50, bool includeBroadcasts = true, CancellationToken ct = default)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -61,6 +69,8 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
             .Take(limit)
             .Select(n => new AppNotificationDto(n.Id, n.Type, n.Title, n.Body, n.IsRead, n.CreatedUtc, n.ReferenceId, false))
             .ToListAsync(ct);
+
+        if (!includeBroadcasts) return personal;
 
         var broadcasts = await db.Notifications
             .AsNoTracking()
@@ -86,7 +96,7 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
             .ToList();
     }
 
-    public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken ct = default)
+    public async Task<int> GetUnreadCountAsync(Guid userId, bool includeBroadcasts = true, CancellationToken ct = default)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -94,6 +104,10 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
         var personalUnread = await db.Notifications
             .AsNoTracking()
             .CountAsync(n => n.UserId == userId && !n.IsRead, ct);
+
+        // Счётчик обязан считать ровно то, что попадёт в список, иначе бейдж
+        // покажет число, которого пользователь у себя не найдёт.
+        if (!includeBroadcasts) return personalUnread;
 
         var broadcastUnread = await db.Notifications
             .AsNoTracking()
@@ -103,7 +117,7 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
         return personalUnread + broadcastUnread;
     }
 
-    public async Task MarkReadAsync(Guid notificationId, Guid userId, CancellationToken ct = default)
+    public async Task MarkReadAsync(Guid notificationId, Guid userId, bool includeBroadcasts = true, CancellationToken ct = default)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -116,7 +130,9 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
             notification.IsRead = true;
             await db.SaveChangesAsync(ct);
         }
-        else if (notification.UserId is null)
+        // Из self-service рассылку не гасим: она сотруднику не показывалась, а
+        // отметка «прочитано» скрыла бы её в админ-панели того же пользователя.
+        else if (notification.UserId is null && includeBroadcasts)
         {
             var exists = await db.NotificationReads.AnyAsync(
                 r => r.NotificationId == notificationId && r.UserId == userId, ct);
@@ -128,7 +144,7 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
         }
     }
 
-    public async Task MarkAllReadAsync(Guid userId, CancellationToken ct = default)
+    public async Task MarkAllReadAsync(Guid userId, bool includeBroadcasts = true, CancellationToken ct = default)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -136,6 +152,8 @@ public sealed class NotificationService(IServiceScopeFactory scopeFactory, IHubC
         await db.Notifications
             .Where(n => n.UserId == userId && !n.IsRead)
             .ExecuteUpdateAsync(s => s.SetProperty(n => n.IsRead, true), ct);
+
+        if (!includeBroadcasts) return;
 
         var broadcastIds = await db.Notifications
             .AsNoTracking()

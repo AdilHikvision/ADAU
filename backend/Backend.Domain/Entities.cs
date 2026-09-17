@@ -46,6 +46,13 @@ public sealed class Device : BaseEntity
     public DeviceStatus? DeviceStatus { get; set; }
     public ICollection<AccessLevelDoor> AccessLevelDoors { get; set; } = new List<AccessLevelDoor>();
 
+    /// <summary>
+    /// Что проход через это устройство означает для табеля. Both — прежнее
+    /// поведение: первое событие за день считается приходом, последнее уходом.
+    /// In/Out задают, когда вход и выход разведены на разные считыватели.
+    /// </summary>
+    public AttendanceDirection AttendanceDirection { get; set; } = AttendanceDirection.Both;
+
     /// <summary>Для ANPR-камеры: снимает въезд или выезд. null — определять по открытой сессии.</summary>
     public ParkingCameraDirection? ParkingDirection { get; set; }
     /// <summary>Для ANPR-камеры: зона парковки, к которой относится проезд.</summary>
@@ -62,6 +69,21 @@ public enum ParkingCameraDirection
 {
     Entry = 1,
     Exit = 2
+}
+
+/// <summary>
+/// Что считыватель фиксирует для табеля. Значение по умолчанию — Both, поэтому
+/// уже заведённые устройства продолжают работать как раньше, пока направление
+/// не задано явно.
+/// </summary>
+public enum AttendanceDirection
+{
+    /// <summary>И приход, и уход: первый проход за день — приход, последний — уход.</summary>
+    Both = 0,
+    /// <summary>Только приход. Проход через такое устройство никогда не закрывает день.</summary>
+    In = 1,
+    /// <summary>Только уход. Проход через такое устройство никогда не открывает день.</summary>
+    Out = 2
 }
 
 /// <summary>Компания или холдинг.</summary>

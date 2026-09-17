@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
-import { PageHeader, Modal } from '../components/organisms'
+import { PageHeader, Modal, VisitorPassActions } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 import { FaceThumbnail } from '../components/FaceThumbnail'
@@ -49,6 +49,8 @@ interface VisitorResponse {
   facesCount: number
   fingerprintsCount: number
   irisesCount: number
+  /** Номер QR-пропуска; без него билет строить не из чего. */
+  qrCardNo?: string | null
 }
 
 interface DepartmentTreeItem {
@@ -89,6 +91,9 @@ export function PeopleManagementPage() {
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
   const [residents, setResidents] = useState<EmployeeResponse[]>([])
   const [visitors, setVisitors] = useState<VisitorResponse[]>([])
+  // Название организации попадает в шапку пропуска-билета. Не критично: если
+  // настройка не задана или запрос не прошёл, билет печатается без неё.
+  const [companyName, setCompanyName] = useState<string | null>(null)
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [deptFilter, setDeptFilter] = useState<string>('')
@@ -162,6 +167,15 @@ export function PeopleManagementPage() {
       setError(e instanceof Error ? e.message : t('people.errors.loadVisitors'))
     }
   }, [token, searchQuery, t])
+
+  // Название организации для шапки пропуска. Ошибку глотаем: билет без неё
+  // остаётся валидным, а список гостей из-за настройки падать не должен.
+  useEffect(() => {
+    if (!token) return
+    apiRequest<{ key: string; value: string }>('/api/system-settings/CompanyName', { token })
+      .then((s) => setCompanyName(s?.value?.trim() || null))
+      .catch(() => setCompanyName(null))
+  }, [token])
 
   const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
@@ -552,6 +566,20 @@ export function PeopleManagementPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      {/* Пропуск-билет: скачать или отправить гостю. Показываем
+                          только когда у гостя выдан QR-пропуск. */}
+                      {item.type === 'visitor' && item.qrCardNo && (
+                        <VisitorPassActions
+                          cardNo={item.qrCardNo}
+                          fullName={`${item.firstName} ${item.lastName}`.trim()}
+                          companyName={companyName}
+                          department={item.department?.name}
+                          accessLevels={item.accessLevelNames}
+                          documentNumber={item.documentNumber}
+                          validFromUtc={item.validFromUtc}
+                          validToUtc={item.validToUtc}
+                        />
+                      )}
                       <Badge variant={item.isActive ? 'success' : 'neutral'}>
                         {item.type === 'employee' ? (item.isActive ? t('common.active') : t('people.terminated')) : (item.isActive ? t('common.active') : t('people.blocked'))}
                       </Badge>

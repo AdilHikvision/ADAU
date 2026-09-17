@@ -7,3 +7,4 @@ export { Icon } from './Icon';
 export { Label } from './Label';
 export { Logo } from './Logo';
 export { Spinner } from './Spinner';
+export { Toggle } from './Toggle';

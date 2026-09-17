@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button } from '../components/atoms'
 import { PageHeader, Modal } from '../components/organisms'
+import { Pagination, usePageReset, pageSlice } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 
@@ -48,6 +49,10 @@ function formatDT(iso: string) {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+function formatT(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 export function AttendanceApprovalsPage() {
   const { t } = useTranslation()
   const { token } = useAuth()
@@ -55,6 +60,8 @@ export function AttendanceApprovalsPage() {
   const [loading, setLoading] = useState(false)
   const [filterStatus, setFilterStatus] = useState('Pending')
   const [filterType, setFilterType] = useState('')
+  // Смена фильтра статуса/типа возвращает список на первую страницу.
+  const [page, setPage] = usePageReset(`${filterStatus}|${filterType}`)
 
   const [reviewModal, setReviewModal] = useState<{ id: string; action: 'approve' | 'reject' } | null>(null)
   const [reviewComment, setReviewComment] = useState('')
@@ -145,7 +152,10 @@ export function AttendanceApprovalsPage() {
                 <span className="material-symbols-outlined text-4xl">inbox</span>
                 <p className="text-sm">{t('approvals.emptyState')}</p>
               </div>
-            ) : (
+            ) : (() => {
+              const paged = pageSlice(requests, page)
+              return (
+              <>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -160,7 +170,7 @@ export function AttendanceApprovalsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {requests.map((r) => {
+                    {paged.rows.map((r) => {
                       const statusColor = STATUS_COLORS[r.status] ?? 'text-text-light bg-background-light'
                       const statusKey = STATUS_KEYS[r.status]
                       const statusLabel = statusKey ? t(statusKey) : r.status
@@ -170,7 +180,12 @@ export function AttendanceApprovalsPage() {
                         <tr key={r.id} className="border-b border-border last:border-none hover:bg-background-light transition-colors">
                           <td className="px-5 py-3 font-bold text-text-dark">{r.employeeName}</td>
                           <td className="px-5 py-3 text-text-dark">{typeLabel}</td>
-                          <td className="px-5 py-3 text-text-light">{formatDT(r.requestedTimeUtc)}</td>
+                          {/* У почасовой отлучки есть конец интервала — согласующему нужны обе границы. */}
+                          <td className="px-5 py-3 text-text-light">
+                            {r.requestedEndTimeUtc
+                              ? `${formatDT(r.requestedTimeUtc)}–${formatT(r.requestedEndTimeUtc)}`
+                              : formatDT(r.requestedTimeUtc)}
+                          </td>
                           <td className="px-5 py-3 text-xs">
                             {r.latitude != null && r.longitude != null ? (
                               <div className="space-y-0.5">
@@ -223,7 +238,10 @@ export function AttendanceApprovalsPage() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination page={paged.page} totalPages={paged.totalPages} total={requests.length} onPage={setPage} />
+              </>
+              )
+            })()}
           </div>
         </div>
       </div>

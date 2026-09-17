@@ -131,9 +131,12 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
                                         <p className="text-xs font-bold leading-snug text-text-dark">
                                             {parseNotifText(n.title, t)}
                                         </p>
-                                        <p className="text-xs text-text-light leading-snug mt-0.5 line-clamp-2">
-                                            {parseNotifText(n.body, t)}
-                                        </p>
+                                        {/* Тело может быть пустым (напр. дневной отчёт — только заголовок) — пустую строку не рисуем. */}
+                                        {parseNotifText(n.body, t).trim() !== '' && (
+                                            <p className="text-xs text-text-light leading-snug mt-0.5 line-clamp-2">
+                                                {parseNotifText(n.body, t)}
+                                            </p>
+                                        )}
                                         <p className="text-[10px] text-text-muted mt-1">{timeAgo(n.createdAtUtc)}</p>
                                     </div>
                                     {!n.isRead && (

@@ -22,7 +22,7 @@ public sealed class EmailTemplateService(IServiceScopeFactory scopeFactory) : IE
         ["attendance_report"] = (
             "Attendance Report",
             "Sent when a manager exports the attendance report for a period.",
-            ["{{companyName}}", "{{fromDate}}", "{{toDate}}", "{{tableRows}}", "{{generatedAt}}"]),
+            ["{{companyName}}", "{{fromDate}}", "{{toDate}}", "{{tableHead}}", "{{tableRows}}", "{{generatedAt}}"]),
 
         ["payroll_report"] = (
             "Payroll Report",
@@ -82,13 +82,7 @@ public sealed class EmailTemplateService(IServiceScopeFactory scopeFactory) : IE
               <table style="width:100%;border-collapse:collapse;font-size:13px">
                 <thead>
                   <tr style="background:#f1f5f9">
-                    <th style="padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Date</th>
-                    <th style="padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Employee</th>
-                    <th style="padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Department</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Check-In</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Check-Out</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Hours</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0">Late</th>
+                    {{tableHead}}
                   </tr>
                 </thead>
                 <tbody>{{tableRows}}</tbody>

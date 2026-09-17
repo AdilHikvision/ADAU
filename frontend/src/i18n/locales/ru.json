@@ -1708,6 +1708,9 @@
     "requestSubmittedForReview": "Заявка отправлена на рассмотрение.",
     "checkInTimeLabel": "Время входа (ЧЧ:ММ)",
     "checkOutTimeLabel": "Время выхода (ЧЧ:ММ)",
+    "permissionFromTime": "С (ЧЧ:ММ)",
+    "permissionToTime": "До (ЧЧ:ММ)",
+    "permissionEndBeforeStart": "Время окончания должно быть позже времени начала.",
     "startDateTime": "Дата и время начала",
     "dateTime": "Дата и время",
     "endDateTime": "Дата и время окончания",
@@ -1754,6 +1757,7 @@
       "CheckIn": "Корректировка входа",
       "CheckOut": "Корректировка выхода",
       "Absence": "Отсутствие",
+      "HourlyAbsence": "Отлучка (часы)",
       "Vacation": "Отпуск",
       "Overtime": "Сверхурочные"
     },
@@ -1948,6 +1952,13 @@
       "testSkipped": "Реле не задано: сервер шлагбаумом не управляет",
       "testFailed": "Не удалось подать импульс на реле",
       "testOkGate": "Шлагбаум открыт штатной командой камеры"
+    },
+    "attendanceDirection": {
+      "label": "Направление для табеля",
+      "both": "Приход и уход",
+      "in": "Только приход",
+      "out": "Только уход",
+      "hint": "При «приход и уход» день считается по первому и последнему событию, поэтому повторный проход утром выглядит как уход. Разведите вход и выход по разным считывателям, чтобы этого не было."
     }
   },
   "devices": {
@@ -2289,7 +2300,7 @@
     "signInEmail": "Email для входа",
     "signInEmailPlaceholder": "employee@company.com",
     "accountCreated": "Учётная запись создана!",
-    "temporaryPassword": "Временный пароль:",
+    "temporaryPassword": "Временный пароль",
     "savePasswordHint": "Сохраните этот пароль — он больше не будет показан.",
     "defaultWorkSchedule": "Рабочий график по умолчанию",
     "noSchedule": "— Без графика —",
@@ -2382,7 +2393,15 @@
       "cameraAccess": "Не удалось получить доступ к камере"
     },
     "employeeProfileHint": "Карточка сотрудника: данные, фото и биометрия.",
-    "visitorProfileHint": "Карточка посетителя: данные, фото и биометрия."
+    "visitorProfileHint": "Карточка посетителя: данные, фото и биометрия.",
+    "copyPassword": "Копировать",
+    "passwordCopied": "Скопирован",
+    "credentialsEmailSent": "Доступ отправлен письмом на {{email}}.",
+    "credentialsEmailFailed": "Письмо не отправлено — передайте пароль сотруднику сами (Настройки → Почта).",
+    "createSelfService": "Создать самообслуживание",
+    "createSelfServiceHint": "Создаёт учётную запись и показывает временный пароль здесь (он также уйдёт письмом).",
+    "resetSelfServicePassword": "Перевыпустить пароль",
+    "resetSelfServiceHint": "Выдаёт новый временный пароль — текущий перестанет работать."
   },
   "workHours": {
     "pageTitle": "Отчет по рабочему времени",
@@ -2624,7 +2643,28 @@
     "permissionFromTime": "С",
     "permissionToTime": "До",
     "permissionShowInReport": "Отображать в отчёте",
-    "permissionDeductHint": "Часы отсутствия будут вычтены из общего отработанного времени. Без галочки разрешение просто фиксируется."
+    "permissionDeductHint": "Часы отсутствия будут вычтены из общего отработанного времени. Без галочки разрешение просто фиксируется.",
+    "columns": {
+      "button": "Колонки",
+      "showAll": "Показать все колонки",
+      "hint": "Применяется к таблице, а также к отчётам в Excel, PDF и письме. Часть колонок есть только в выгрузках.",
+      "names": {
+        "employee": "Сотрудник",
+        "department": "Отдел",
+        "date": "Дата",
+        "schedule": "График",
+        "shift": "Смена",
+        "checkIn": "Приход",
+        "checkOut": "Уход",
+        "hours": "Часы",
+        "norm": "Норма",
+        "overtime": "Сверхурочные",
+        "late": "Опоздание",
+        "early": "Ранний уход",
+        "status": "Статус",
+        "corrected": "Скорректировано"
+      }
+    }
   },
   "systemSettings": {
     "pageTitle": "Настройки системы",
@@ -2737,6 +2777,7 @@
       "enableDesc": "Отправлять письма через ваш SMTP-сервер",
       "host": "SMTP-сервер",
       "port": "Порт",
+      "passwordSaved": "Сохранён — введите новый, чтобы заменить",
       "username": "Имя пользователя",
       "fromAddress": "Адрес отправителя",
       "fromName": "Имя отправителя",
@@ -2922,6 +2963,7 @@
     "enabled": "Включить ассистента",
     "apiKey": "API-ключ OpenRouter",
     "apiKeyHint": "Ключ можно получить на openrouter.ai/keys",
+    "apiKeySaved": "Сохранён — введите новый, чтобы заменить",
     "model": "Модель",
     "baseUrl": "Base URL",
     "test": "Проверить подключение",
@@ -3045,5 +3087,25 @@
     "residentSearchPlaceholder": "Поиск жильца…",
     "noResidentsInBlock": "В этом блоке нет жильцов.",
     "apartmentShort": "кв."
+  },
+  "visitorPass": {
+    "ticketTitle": "Гостевой пропуск",
+    "pass": "Пропуск гостя",
+    "guest": "Гость",
+    "where": "Куда",
+    "validFrom": "Действует с",
+    "validTo": "Действует до",
+    "document": "Документ",
+    "scanHint": "Покажите этот QR-код на входе.",
+    "download": "Скачать пропуск",
+    "share": "Поделиться пропуском",
+    "shareText": "{{name}} — гостевой пропуск, {{company}}",
+    "desktopHint": "Картинка пропуска скачана. Откройте чат и прикрепите её.",
+    "failed": "Не удалось собрать пропуск",
+    "via": {
+      "whatsapp": "WhatsApp",
+      "telegram": "Telegram",
+      "email": "Эл. почта"
+    }
   }
 }

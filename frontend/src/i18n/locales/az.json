@@ -1697,6 +1697,9 @@
     "requestSubmittedForReview": "Sorğu baxılmaq üçün göndərildi.",
     "checkInTimeLabel": "Giriş vaxtı (SS:DD)",
     "checkOutTimeLabel": "Çıxış vaxtı (SS:DD)",
+    "permissionFromTime": "Saat (SS:DD)",
+    "permissionToTime": "Saatadək (SS:DD)",
+    "permissionEndBeforeStart": "Bitmə vaxtı başlanğıc vaxtından sonra olmalıdır.",
     "startDateTime": "Başlanğıc tarixi və vaxtı",
     "dateTime": "Tarix və vaxt",
     "endDateTime": "Bitmə tarixi və vaxtı",
@@ -1743,6 +1746,7 @@
       "CheckIn": "Girişin düzəldilməsi",
       "CheckOut": "Çıxışın düzəldilməsi",
       "Absence": "Yoxluq",
+      "HourlyAbsence": "İcazə (saatlıq)",
       "Vacation": "Məzuniyyət",
       "Overtime": "İş saatlarından artıq"
     },
@@ -1937,6 +1941,13 @@
       "testSkipped": "Rele təyin edilməyib: server şlaqbaumu idarə etmir",
       "testFailed": "Releyə impuls göndərmək alınmadı",
       "testOkGate": "Şlaqbaum kameranın öz əmri ilə açıldı"
+    },
+    "attendanceDirection": {
+      "label": "Davamiyyət istiqaməti",
+      "both": "Giriş və çıxış",
+      "in": "Yalnız giriş",
+      "out": "Yalnız çıxış",
+      "hint": "«Giriş və çıxış» seçildikdə gün ilk və son hadisə üzrə hesablanır, ona görə səhər ikinci keçid çıxış kimi görünür. Bunun qarşısını almaq üçün girişi və çıxışı ayrı oxuyuculara bölün."
     }
   },
   "devices": {
@@ -2278,7 +2289,7 @@
     "signInEmail": "Giriş e-poçtu",
     "signInEmailPlaceholder": "employee@company.com",
     "accountCreated": "Hesab yaradıldı!",
-    "temporaryPassword": "Müvəqqəti parol:",
+    "temporaryPassword": "Müvəqqəti parol",
     "savePasswordHint": "Bu parolu saxlayın — bir daha göstərilməyəcək.",
     "defaultWorkSchedule": "Standart iş cədvəli",
     "noSchedule": "— Cədvəl yoxdur —",
@@ -2371,7 +2382,15 @@
       "cameraAccess": "Kameraya giriş alına bilmədi"
     },
     "employeeProfileHint": "İşçi kartı: məlumatlar, şəkil və biometriya.",
-    "visitorProfileHint": "Ziyarətçi kartı: məlumatlar, şəkil və biometriya."
+    "visitorProfileHint": "Ziyarətçi kartı: məlumatlar, şəkil və biometriya.",
+    "copyPassword": "Kopyala",
+    "passwordCopied": "Kopyalandı",
+    "credentialsEmailSent": "Giriş məlumatları {{email}} ünvanına göndərildi.",
+    "credentialsEmailFailed": "Məktub göndərilmədi — parolu işçiyə özünüz çatdırın (Parametrlər → E-poçt).",
+    "createSelfService": "Özünəxidmət yarat",
+    "createSelfServiceHint": "Hesab yaradılır və müvəqqəti parol bu səhifədə göstərilir (həm də e-poçta göndərilir).",
+    "resetSelfServicePassword": "Parolu yenidən ver",
+    "resetSelfServiceHint": "Yeni müvəqqəti parol verilir — köhnəsi işləməyəcək."
   },
   "workHours": {
     "pageTitle": "Davamiyyət hesabatı",
@@ -2601,7 +2620,28 @@
     "permissionFromTime": "Başlanğıc",
     "permissionToTime": "Son",
     "permissionShowInReport": "Hesabatda göstər",
-    "permissionDeductHint": "İcazə saatları ümumi iş vaxtından çıxılacaq. Seçilməzsə, icazə yalnız qeyd olunur."
+    "permissionDeductHint": "İcazə saatları ümumi iş vaxtından çıxılacaq. Seçilməzsə, icazə yalnız qeyd olunur.",
+    "columns": {
+      "button": "Sütunlar",
+      "showAll": "Bütün sütunları göstər",
+      "hint": "Cədvələ, həmçinin Excel, PDF və e-poçt hesabatlarına tətbiq olunur. Bəzi sütunlar yalnız ixracda görünür.",
+      "names": {
+        "employee": "İşçi",
+        "department": "Şöbə",
+        "date": "Tarix",
+        "schedule": "Qrafik",
+        "shift": "Növbə",
+        "checkIn": "Giriş",
+        "checkOut": "Çıxış",
+        "hours": "Saatlar",
+        "norm": "Norma",
+        "overtime": "Əlavə iş",
+        "late": "Gecikmə",
+        "early": "Tez çıxma",
+        "status": "Status",
+        "corrected": "Düzəliş edilib"
+      }
+    }
   },
   "systemSettings": {
     "pageTitle": "Sistem Parametrləri",
@@ -2714,6 +2754,7 @@
       "enableDesc": "E-poçtları SMTP serveriniz vasitəsilə göndərin",
       "host": "SMTP host",
       "port": "Port",
+      "passwordSaved": "Saxlanılıb — dəyişmək üçün yeni şifrə yazın",
       "username": "İstifadəçi adı",
       "fromAddress": "Göndərən ünvan",
       "fromName": "Göndərən ad",
@@ -2899,6 +2940,7 @@
     "enabled": "Köməkçini aktiv et",
     "apiKey": "OpenRouter API açarı",
     "apiKeyHint": "Açarı openrouter.ai/keys ünvanından ala bilərsiniz",
+    "apiKeySaved": "Saxlanılıb — dəyişmək üçün yeni açar yazın",
     "model": "Model",
     "baseUrl": "Base URL",
     "test": "Bağlantını yoxla",
@@ -3019,5 +3061,25 @@
     "residentSearchPlaceholder": "Sakin axtar…",
     "noResidentsInBlock": "Bu blokda sakin yoxdur.",
     "apartmentShort": "mənzil"
+  },
+  "visitorPass": {
+    "ticketTitle": "Qonaq buraxılışı",
+    "pass": "Qonaq vəsiqəsi",
+    "guest": "Qonaq",
+    "where": "Giriş icazəsi",
+    "validFrom": "Etibarlıdır",
+    "validTo": "Bitir",
+    "document": "Sənəd",
+    "scanHint": "Bu QR kodu girişdə göstərin.",
+    "download": "Buraxılışı yüklə",
+    "share": "Buraxılışı paylaş",
+    "shareText": "{{name}} — qonaq buraxılışı, {{company}}",
+    "desktopHint": "Buraxılış şəkli yükləndi. Söhbəti açıb şəkli əlavə edin.",
+    "failed": "Buraxılış hazırlanmadı",
+    "via": {
+      "whatsapp": "WhatsApp",
+      "telegram": "Telegram",
+      "email": "E-poçt"
+    }
   }
 }

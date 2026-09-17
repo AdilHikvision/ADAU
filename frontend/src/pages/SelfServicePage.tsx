@@ -51,12 +51,16 @@ interface SelfServiceLeave {
 
 const MY_REQUESTS_PAGE_SIZE = 5
 
-type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'Vacation'
+// HourlyAbsence — только тип карточки в UI. На бэкенд уходит как Absence с
+// requestedEndTimeUtc: одобрение такой заявки создаёт AttendancePermission (почасовая
+// отлучка), тогда как Absence без конца интервала — отгул на целый день (EmployeeLeave).
+type RequestType = 'CheckIn' | 'CheckOut' | 'Absence' | 'HourlyAbsence' | 'Vacation'
 
 const REQUEST_TYPE_CONFIG: { type: RequestType; icon: string; color: string }[] = [
   { type: 'CheckIn', icon: 'login', color: 'bg-green-500/10 text-green-600' },
   { type: 'CheckOut', icon: 'logout', color: 'bg-blue-500/10 text-blue-600' },
   { type: 'Absence', icon: 'person_off', color: 'bg-amber-500/10 text-amber-600' },
+  { type: 'HourlyAbsence', icon: 'more_time', color: 'bg-sky-500/10 text-sky-600' },
   { type: 'Vacation', icon: 'beach_access', color: 'bg-purple-500/10 text-purple-600' },
 ]
 
@@ -90,6 +94,14 @@ function formatDateOnly(iso: string) {
   return `${d}.${m}.${y}`
 }
 
+// Календарная дата UTC-момента в местном времени: у отлучки рано утром / поздно вечером
+// UTC-дата в ISO-строке может отличаться от той, на которую подана заявка.
+function formatLocalDateOnly(iso: string) {
+  const dt = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(dt.getDate())}.${pad(dt.getMonth() + 1)}.${dt.getFullYear()}`
+}
+
 export function SelfServicePage() {
   const { t, i18n } = useTranslation()
   const navigate = useNavigate()
@@ -110,6 +122,9 @@ export function SelfServicePage() {
   const [corrDate, setCorrDate] = useState(new Date().toISOString().slice(0, 10))
   const [corrCheckIn, setCorrCheckIn] = useState('')
   const [, setCorrCheckOut] = useState('')
+  // Интервал почасовой отлучки (type === 'HourlyAbsence'), HH:MM локального времени.
+  const [permFrom, setPermFrom] = useState('')
+  const [permTo, setPermTo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitSuccess, setSubmitSuccess] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -199,6 +214,8 @@ export function SelfServicePage() {
     setCorrDate(new Date().toISOString().slice(0, 10))
     setCorrCheckIn('')
     setCorrCheckOut('')
+    setPermFrom('')
+    setPermTo('')
     setSubmitSuccess(false)
     setSubmitError(null)
     setModalOpen(true)
@@ -241,6 +258,35 @@ export function SelfServicePage() {
             comment: reqComment || null,
             latitude,
             longitude,
+          }),
+        })
+      } else if (selectedType === 'HourlyAbsence') {
+        // Почасовая отлучка: дата + интервал HH:MM. Уходит как Absence с обоими временами,
+        // после одобрения бэкенд создаёт AttendancePermission и вычитает часы из отчёта.
+        const day = reqDateTime.slice(0, 10)
+        const mFrom = permFrom.match(/^([01][0-9]|2[0-3]):([0-5][0-9])$/)
+        const mTo = permTo.match(/^([01][0-9]|2[0-3]):([0-5][0-9])$/)
+        if (!day || !mFrom || !mTo) {
+          setSubmitError(t('selfService.enterTimeHHMM'))
+          setSubmitting(false)
+          return
+        }
+        const start = new Date(`${day}T00:00:00`)
+        start.setHours(parseInt(mFrom[1], 10), parseInt(mFrom[2], 10), 0, 0)
+        const end = new Date(`${day}T00:00:00`)
+        end.setHours(parseInt(mTo[1], 10), parseInt(mTo[2], 10), 0, 0)
+        if (end <= start) {
+          setSubmitError(t('selfService.permissionEndBeforeStart'))
+          setSubmitting(false)
+          return
+        }
+        await ssApiRequest('/api/self-service/requests', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'Absence',
+            requestedTimeUtc: start.toISOString(),
+            requestedEndTimeUtc: end.toISOString(),
+            comment: reqComment || null,
           }),
         })
       } else {
@@ -531,12 +577,19 @@ export function SelfServicePage() {
                   const r = it.request
                   const statusColor = STATUS_COLORS[r.status] ?? 'text-text-light bg-background-light'
                   const statusLabel = STATUS_COLORS[r.status] ? t(`selfService.statuses.${r.status}`) : r.status
-                  const typeLabel = REQUEST_TYPE_CONFIG.find((c) => c.type === r.type) ? t(`selfService.requestTypes.${r.type}`) : r.type
+                  // Absence с концом интервала — почасовая отлучка: показываем «дата, с–до».
+                  const isHourly = r.type === 'Absence' && !!r.requestedEndTimeUtc
+                  const uiType = isHourly ? 'HourlyAbsence' : r.type
+                  const typeLabel = REQUEST_TYPE_CONFIG.find((c) => c.type === uiType) ? t(`selfService.requestTypes.${uiType}`) : r.type
                   return (
                     <div key={r.id} className="bg-surface rounded-2xl p-4 shadow-sm flex items-start justify-between gap-3">
                       <div className="space-y-0.5">
                         <p className="font-bold text-text-dark text-sm">{typeLabel}</p>
-                        <p className="text-text-light text-xs">{formatDateTime(r.requestedTimeUtc)}</p>
+                        <p className="text-text-light text-xs">
+                          {isHourly
+                            ? `${formatLocalDateOnly(r.requestedTimeUtc)} · ${formatTime(r.requestedTimeUtc)}–${formatTime(r.requestedEndTimeUtc!)}`
+                            : formatDateTime(r.requestedTimeUtc)}
+                        </p>
                         {r.comment && <p className="text-text-light text-xs italic">"{r.comment}"</p>}
                       </div>
                       <span className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${statusColor}`}>
@@ -633,6 +686,30 @@ export function SelfServicePage() {
                       required
                       className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                     />
+                  </div>
+                )}
+                {selectedType === 'HourlyAbsence' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.permissionFromTime')}</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={permFrom}
+                        onChange={(e) => setPermFrom(maskHHMM(e.target.value))}
+                        required
+                        className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.permissionToTime')}</label>
+                      <input
+                        type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5}
+                        value={permTo}
+                        onChange={(e) => setPermTo(maskHHMM(e.target.value))}
+                        required
+                        className="w-full rounded-xl bg-background-light border-none px-4 py-2.5 text-sm font-bold font-mono text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                    </div>
                   </div>
                 )}
                 {isLeaveType && (

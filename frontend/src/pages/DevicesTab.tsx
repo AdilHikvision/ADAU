@@ -29,6 +29,8 @@ interface Device {
   username?: string | null
   statusMessage?: string | null
   macAddress?: string | null
+  /** Что проход через устройство означает для табеля: Both | In | Out. */
+  attendanceDirection?: string | null
   parkingDirection?: string | null
   parkingZoneId?: string | null
   /** Реле шлагбаума на камере; null/0 — шлагбаумом управляет сама камера. */
@@ -69,6 +71,8 @@ interface DeviceFormData {
   deviceType: number
   username: string
   password: string
+  /** Что проход означает для табеля. Both — прежнее поведение: первый проход за день приход, последний уход. */
+  attendanceDirection: 'Both' | 'In' | 'Out'
   /** Только для ANPR-камеры: '' — определять по открытой сессии, иначе Entry/Exit. */
   parkingDirection: '' | 'Entry' | 'Exit'
   parkingZoneId: string
@@ -85,6 +89,7 @@ const emptyForm: DeviceFormData = {
   deviceType: 1,
   username: 'admin',
   password: '',
+  attendanceDirection: 'Both',
   parkingDirection: '',
   parkingZoneId: '',
   barrierOutput: '',
@@ -433,6 +438,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       deviceType: deviceTypeStringToNumber(device.deviceType),
       username: device.username ?? 'admin',
       password: '',
+      attendanceDirection: (device.attendanceDirection === 'In' || device.attendanceDirection === 'Out') ? device.attendanceDirection : 'Both',
       parkingDirection: (device.parkingDirection === 'Entry' || device.parkingDirection === 'Exit') ? device.parkingDirection : '',
       parkingZoneId: device.parkingZoneId ?? '',
       barrierOutput: device.barrierOutput ? String(device.barrierOutput) : '',
@@ -502,6 +508,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
           deviceType: formData.deviceType,
           username: formData.username.trim() || null,
           password: formData.password || null,
+          attendanceDirection: formData.attendanceDirection,
           parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
           parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
           barrierOutput: formData.deviceType === ANPR_DEVICE_TYPE ? (parseInt(formData.barrierOutput, 10) || null) : null,
@@ -534,6 +541,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
           deviceType: formData.deviceType,
           username: formData.username.trim() || null,
           password: formData.password || null,
+          attendanceDirection: formData.attendanceDirection,
           parkingDirection: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingDirection || null) : null,
           parkingZoneId: formData.deviceType === ANPR_DEVICE_TYPE ? (formData.parkingZoneId || null) : null,
           barrierOutput: formData.deviceType === ANPR_DEVICE_TYPE ? (parseInt(formData.barrierOutput, 10) || null) : null,
@@ -885,6 +893,26 @@ export const DevicesTab = forwardRef((_props, ref) => {
               <option value={6}>ANPR Camera</option>
             </select>
           </div>
+
+          {/* Что проход через это устройство значит для табеля. Пока стоит «и приход,
+              и уход», день считается по первому и последнему событию — и повторный
+              проход утром выглядит как уход. Разведя вход и выход по устройствам,
+              этого не происходит. У ANPR-камеры своё направление (парковка). */}
+          {formData.deviceType !== ANPR_DEVICE_TYPE && (
+            <div>
+              <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('devicesTab.attendanceDirection.label')}</label>
+              <select
+                value={formData.attendanceDirection}
+                onChange={(e) => setFormData((p) => ({ ...p, attendanceDirection: e.target.value as DeviceFormData['attendanceDirection'] }))}
+                className="w-full h-9 px-3 bg-slate-75 border border-border-base rounded-md text-xs outline-none"
+              >
+                <option value="Both">{t('devicesTab.attendanceDirection.both')}</option>
+                <option value="In">{t('devicesTab.attendanceDirection.in')}</option>
+                <option value="Out">{t('devicesTab.attendanceDirection.out')}</option>
+              </select>
+              <p className="mt-1 text-[10px] text-text-light">{t('devicesTab.attendanceDirection.hint')}</p>
+            </div>
+          )}
 
           {/* Камера парковки: куда относить проезд и в какую зону писать сессию. */}
           {formData.deviceType === ANPR_DEVICE_TYPE && (
