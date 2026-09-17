@@ -37,6 +37,8 @@ interface DeviceCapabilities {
   isSupportIrisInfo: boolean
   isSupportEventCardLinkageCfg: boolean
   isSupportCardInfo?: boolean
+  /** Сервер узнал станцию регистрации по модели устройства (deviceInfo), даже если в базе она заведена контроллером. */
+  isEnroller?: boolean
 }
 
 /** Для записи биометрии годятся только терминалы и станции регистрации. */
@@ -45,8 +47,11 @@ const ENROLL_DEVICE_TYPES = new Set(['AccessController', 'AttendanceTerminal', '
 /** Энроллер определяем как на бэкенде: по типу либо по серийнику/имени DS-K1F… */
 function looksLikeEnroller(identifier: string, name: string): boolean {
   const s = `${identifier} ${name}`.toUpperCase()
-  return s.includes('K1F100') || s.includes('K1F600') || s.includes('K1F510') || s.includes('K1F800')
+  return s.includes('DS-K1F') || s.includes('K1F100') || s.includes('K1F600') || s.includes('K1F510') || s.includes('K1F800')
 }
+
+/** Что считываем с устройства; у каждого вида своё выбранное устройство. */
+type CaptureKind = 'faces' | 'fingerprints' | 'cards'
 function isEnroller(d: DeviceRow): boolean {
   return d.deviceType === 'EnrollerStation' || looksLikeEnroller(d.deviceIdentifier, d.name)
 }
@@ -121,8 +126,10 @@ export function PersonBiometricsStep({
     retry?: () => void
   } | null>(null)
   const [mode, setMode] = useState<'file' | 'webcam' | 'device'>('file')
-  const [captureDeviceId, setCaptureDeviceId] = useState('')
-  const [progress, setProgress] = useState<string | null>(null)
+  /** Лицо, отпечаток и карту можно снимать с разных устройств — например, лицо с терминала, отпечаток со станции регистрации. */
+  const [captureDevice, setCaptureDevice] = useState<Record<CaptureKind, string>>({ faces: '', fingerprints: '', cards: '' })
+  /** Прогресс показываем в той карточке, из которой запущен захват. */
+  const [progress, setProgress] = useState<{ kind: CaptureKind; text: string } | null>(null)
   const [cardNo, setCardNo] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -175,6 +182,8 @@ export function PersonBiometricsStep({
             headers: { Authorization: `Bearer ${token}` },
             signal: controller.signal,
           })
+          // Ошибка запроса — возможности неизвестны; не записываем их как «ничего не умеет».
+          if (!res.ok) continue
           const data = await res.json().catch(() => null)
           if (data && typeof data === 'object') {
             next[dev.id] = {
@@ -184,6 +193,7 @@ export function PersonBiometricsStep({
               isSupportIrisInfo: Boolean(data.isSupportIrisInfo),
               isSupportEventCardLinkageCfg: Boolean(data.isSupportEventCardLinkageCfg),
               isSupportCardInfo: Boolean(data.isSupportCardInfo),
+              isEnroller: Boolean(data.isEnroller),
             }
           }
         } catch { /* устройство офлайн — считаем, что умеет всё */ }
@@ -216,32 +226,28 @@ export function PersonBiometricsStep({
     }
   }, [mode])
 
-  const terminals = useMemo(() => devices.filter((d) => !isEnroller(d)), [devices])
-  const enrollers = useMemo(() => devices.filter((d) => isEnroller(d)), [devices])
-  const selectedIsEnroller = useMemo(
-    () => enrollers.some((d) => d.id === captureDeviceId),
-    [enrollers, captureDeviceId],
-  )
-
-  const deviceName = devices.find((d) => d.id === captureDeviceId)?.name
+  const terminals = useMemo(() => devices.filter((d) => !isEnroller(d) && !caps[d.id]?.isEnroller), [devices, caps])
+  const enrollers = useMemo(() => devices.filter((d) => isEnroller(d) || caps[d.id]?.isEnroller), [devices, caps])
 
   /** Ошибка действия: заголовок по смыслу, имя устройства строкой подробностей, кнопка «Повторить». */
-  function fail(e: unknown, opts?: { title?: string; hint?: string; retry?: () => void }) {
+  function fail(e: unknown, opts?: { title?: string; hint?: string; retry?: () => void; kind?: CaptureKind }) {
     const message = e instanceof Error ? e.message : String(e ?? t('errorDialog.title'))
+    const deviceName = opts?.kind ? devices.find((d) => d.id === captureDevice[opts.kind!])?.name : undefined
     setDialog({
       variant: 'error',
       title: opts?.title,
       message,
-      details: deviceName ? [`${t('people.bio.selectDevice')}: ${deviceName}`] : undefined,
+      details: deviceName ? [`${t('people.bio.device')}: ${deviceName}`] : undefined,
       hint: opts?.hint,
       retry: opts?.retry,
     })
   }
 
   /** Проверка возможностей терминала. У энроллеров ISAPI часто отдаёт все флаги false — их не проверяем. */
-  function assertSupports(kind: 'faces' | 'fingerprints' | 'cards'): boolean {
-    if (selectedIsEnroller) return true
-    const cap = caps[captureDeviceId]
+  function assertSupports(kind: CaptureKind): boolean {
+    const deviceId = captureDevice[kind]
+    if (enrollers.some((d) => d.id === deviceId)) return true
+    const cap = caps[deviceId]
     if (cap == null) return true
     const key = kind === 'faces' ? 'deviceNoFaceSupport' : kind === 'fingerprints' ? 'deviceNoFingerprintSupport' : 'deviceNoCardSupport'
     const unsupported =
@@ -252,6 +258,7 @@ export function PersonBiometricsStep({
       fail(t(`personDetail.errors.${key}`), {
         title: t('errorDialog.captureTitle'),
         hint: t('people.bio.selectDeviceHint'),
+        kind,
       })
       return false
     }
@@ -303,39 +310,43 @@ export function PersonBiometricsStep({
   }
 
   /** Захват с терминала/энроллера: старт + опрос прогресса. Один контракт на лицо, палец и карту. */
-  const captureFromDevice = async (kind: 'faces' | 'fingerprints' | 'cards') => {
-    if (!token || !captureDeviceId) return
+  const captureFromDevice = async (kind: CaptureKind) => {
+    const deviceId = captureDevice[kind]
+    if (!token || !deviceId) return
     if (!assertSupports(kind)) return
     let slot: number | null = null
     if (kind === 'fingerprints') {
       slot = nextFingerprintSlot(person?.fingerprints ?? [])
       if (slot === null) {
-        fail(t('personDetail.allSlotsFull'), { title: t('errorDialog.captureTitle') })
+        fail(t('personDetail.allSlotsFull'), { title: t('errorDialog.captureTitle'), kind })
         return
       }
     }
     setBusy(true); setDialog(null)
-    setProgress(kind === 'fingerprints'
-      ? t('personDetail.capture.startingFingerSlot', { slot })
-      : t('personDetail.capture.starting'))
+    setProgress({
+      kind,
+      text: kind === 'fingerprints'
+        ? t('personDetail.capture.startingFingerSlot', { slot })
+        : t('personDetail.capture.starting'),
+    })
     try {
       const pid = personId ?? await ensurePerson()
       if (!pid) return
       const body: Record<string, unknown> = { personId: pid, personType }
       if (slot != null) body.fingerIndex = slot
-      const start = await fetch(`${getApiBaseUrl()}/api/devices/${captureDeviceId}/${kind}/capture`, {
+      const start = await fetch(`${getApiBaseUrl()}/api/devices/${deviceId}/${kind}/capture`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       })
       if (!start.ok) throw new Error((await start.json().catch(() => ({}))).message || t('personDetail.errors.startCaptureFailed'))
       for (;;) {
-        const r = await fetch(`${getApiBaseUrl()}/api/devices/${captureDeviceId}/${kind}/capture/progress`, {
+        const r = await fetch(`${getApiBaseUrl()}/api/devices/${deviceId}/${kind}/capture/progress`, {
           headers: { Authorization: `Bearer ${token}` },
         })
         const prog = await r.json().catch(() => ({}))
         const status = String(prog.status ?? '').toLowerCase()
-        setProgress(prog.message ?? status)
+        setProgress({ kind, text: prog.message ?? status })
         if (status === 'completed') {
           // Устройство может завершить захват без результата — тогда сообщение и есть причина.
           if (!prog.faceId && !prog.fingerprintId && !prog.cardId && prog.message) {
@@ -343,11 +354,13 @@ export function PersonBiometricsStep({
               title: t('errorDialog.captureTitle'),
               hint: t('errorDialog.deviceHint'),
               retry: () => void captureFromDevice(kind),
+              kind,
             })
           }
           break
         }
-        if (status === 'failed') throw new Error(prog.message || t('personDetail.errors.captureFailed'))
+        // idle — сессии на сервере уже нет (истекла или перезапущена): ждать дальше нечего.
+        if (status === 'failed' || status === 'idle') throw new Error(prog.message || t('personDetail.errors.captureFailed'))
         await new Promise((res) => setTimeout(res, 1500))
       }
       await reload(pid)
@@ -356,6 +369,7 @@ export function PersonBiometricsStep({
         title: t('errorDialog.captureTitle'),
         hint: t('errorDialog.deviceHint'),
         retry: () => void captureFromDevice(kind),
+        kind,
       })
     } finally { setBusy(false); setProgress(null) }
   }
@@ -408,10 +422,14 @@ export function PersonBiometricsStep({
      на терминал человек не пишется вовсе. Туда он попадёт только с уровнем доступа. */
   const hasAccessLevel = (person?.accessLevels.length ?? 0) > 0
 
-  const deviceSelect = (className: string) => (
+  const deviceSelect = (kind: CaptureKind, className: string) => (
     <select
-      value={captureDeviceId}
-      onChange={(e) => setCaptureDeviceId(e.target.value)}
+      value={captureDevice[kind]}
+      disabled={busy}
+      onChange={(e) => {
+        const value = e.target.value
+        setCaptureDevice((prev) => ({ ...prev, [kind]: value }))
+      }}
       className={className}
     >
       <option value="">{t('people.bio.selectDevice')}</option>
@@ -426,6 +444,13 @@ export function PersonBiometricsStep({
         </optgroup>
       )}
     </select>
+  )
+
+  const progressLine = (kind: CaptureKind, className: string) => progress?.kind === kind && (
+    <p className={`${className} flex items-center gap-2 text-[11.5px] font-semibold text-primary`}>
+      <span className="spinner-ring text-[16px]" aria-hidden="true" />
+      {progress.text}
+    </p>
   )
 
   return (
@@ -485,7 +510,7 @@ export function PersonBiometricsStep({
           )}
           <button
             type="button"
-            disabled={busy || (mode === 'device' && !captureDeviceId)}
+            disabled={busy || (mode === 'device' && !captureDevice.faces)}
             onClick={() => {
               if (mode === 'file') fileRef.current?.click()
               else if (mode === 'webcam') shootWebcam()
@@ -507,19 +532,14 @@ export function PersonBiometricsStep({
 
         {mode === 'device' && (
           <>
-            {deviceSelect('mt-6 w-full h-11 px-3 rounded-[11px] border border-[#E6E6F0] bg-white text-[12.5px] font-semibold text-text-dark outline-none')}
-            {!captureDeviceId && (
+            {deviceSelect('faces', 'mt-6 w-full h-11 px-3 rounded-[11px] border border-[#E6E6F0] bg-white text-[12.5px] font-semibold text-text-dark outline-none')}
+            {!captureDevice.faces && (
               <p className="mt-2 text-[10.5px] text-[#A0A1B8] leading-relaxed">{t('people.bio.selectDeviceHint')}</p>
             )}
           </>
         )}
 
-        {progress && (
-          <p className="mt-4 flex items-center gap-2 text-[11.5px] font-semibold text-primary">
-            <span className="spinner-ring text-[16px]" aria-hidden="true" />
-            {progress}
-          </p>
-        )}
+        {progressLine('faces', 'mt-4')}
       </div>
 
       {/* ─── Биометрические данные ─── */}
@@ -545,11 +565,12 @@ export function PersonBiometricsStep({
           {person ? `${person.firstName} ${person.lastName}`.trim() : ''}
         </span>
 
-        {mode !== 'device' && deviceSelect('mt-3 w-full h-10 px-3 rounded-[11px] border border-[#E6E6F0] bg-white text-[12px] font-semibold text-text-dark outline-none')}
+        <label className="block mt-4 text-[11px] font-semibold text-[#4A4B6B]">{t('people.bio.fingerprintDevice')}</label>
+        {deviceSelect('fingerprints', 'mt-1.5 w-full h-10 px-3 rounded-[11px] border border-[#E6E6F0] bg-white text-[12px] font-semibold text-text-dark outline-none')}
 
         <button
           type="button"
-          disabled={busy || !captureDeviceId || freeSlot === null}
+          disabled={busy || !captureDevice.fingerprints || freeSlot === null}
           onClick={() => void captureFromDevice('fingerprints')}
           className={`${SOFT_BTN} mt-3`}
         >
@@ -557,7 +578,9 @@ export function PersonBiometricsStep({
           {t('people.bio.enrollFingerprint')}
         </button>
 
-        {!captureDeviceId ? (
+        {progressLine('fingerprints', 'mt-3')}
+
+        {!captureDevice.fingerprints ? (
           <p className="mt-2 text-[10.5px] text-[#A0A1B8] leading-relaxed">{t('people.bio.selectDeviceHint')}</p>
         ) : freeSlot === null ? (
           <p className="mt-2 text-[10.5px] text-error-text leading-relaxed">{t('personDetail.allSlotsFull')}</p>
@@ -631,15 +654,20 @@ export function PersonBiometricsStep({
           <Button onClick={addCard} isLoading={busy} disabled={!cardNo.trim() || busy}>+</Button>
         </div>
 
+        <label className="block mt-4 text-[11px] font-semibold text-[#4A4B6B]">{t('people.bio.cardDevice')}</label>
+        {deviceSelect('cards', 'mt-1.5 w-full h-10 px-3 rounded-[11px] border border-[#E6E6F0] bg-white text-[12px] font-semibold text-text-dark outline-none')}
+
         <button
           type="button"
-          disabled={busy || !captureDeviceId}
+          disabled={busy || !captureDevice.cards}
           onClick={() => void captureFromDevice('cards')}
           className={`${SOFT_BTN} mt-2.5`}
         >
           <span className="material-symbols-outlined text-[18px]">nfc</span>
           {t('people.bio.readCardFromDevice')}
         </button>
+
+        {progressLine('cards', 'mt-3')}
 
         {(person?.cards.length ?? 0) > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">

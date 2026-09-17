@@ -97,6 +97,11 @@ public static class DependencyInjection
         services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();
         services.AddScoped<IDevicePersonSyncService, DevicePersonSyncService>();
         services.AddScoped<IDevicePersonImportService, DevicePersonImportService>();
+        services.AddScoped<CapturedCredentialStore>();
+        // Станции регистрации: сессии захвата живут дольше запроса (ответ станции ждёт человека).
+        services.AddSingleton<Devices.DeviceEnrollmentDetector>();
+        services.AddSingleton<Devices.EnrollerIsapiCapture>();
+        services.AddSingleton<EnrollerCaptureService>();
         services.AddScoped<IDeviceFaceCaptureService, DeviceFaceCaptureService>();
         services.AddScoped<IDeviceCardCaptureService, DeviceCardCaptureService>();
         services.AddScoped<IDeviceFingerprintCaptureService, DeviceFingerprintCaptureService>();

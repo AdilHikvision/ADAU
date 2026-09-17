@@ -13,6 +13,9 @@ namespace Backend.Infrastructure.Devices.Services;
 public sealed class DeviceCardCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
+    DeviceEnrollmentDetector enrollmentDetector,
+    EnrollerCaptureService enrollerCapture,
+    CapturedCredentialStore credentialStore,
     IConfiguration configuration,
     ILogger<DeviceCardCaptureService> logger) : IDeviceCardCaptureService
 {
@@ -48,7 +51,7 @@ public sealed class DeviceCardCaptureService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
 
         string employeeNo;
@@ -93,7 +96,7 @@ public sealed class DeviceCardCaptureService(
         }
 
         if (isEnroller)
-            logger.LogInformation("[CaptureCard] Enroller station: skip UserInfo sync");
+            return enrollerCapture.Start(device, EnrollerCaptureKind.Card, personId, personType);
 
         // ISAPI doc: Card Capture is GET /ISAPI/AccessControl/CaptureCardInfo?format=json
         // It puts device into "waiting for card swipe" mode.
@@ -175,6 +178,9 @@ public sealed class DeviceCardCaptureService(
 
     public async Task<CardCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
+        if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Card, out var enrollerState))
+            return new CardCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId);
+
         if (PendingCardCaptureComplete.TryRemove(deviceId, out var pendingCardId))
             return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", pendingCardId);
 
@@ -225,33 +231,10 @@ public sealed class DeviceCardCaptureService(
                 Sessions.TryRemove(deviceId, out _);
             await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
 
-                var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, cancellationToken);
-                if (exists)
-                    return new CardCaptureProgressResult("failed", "Карта с таким номером уже зарегистрирована.", null);
-
-                var card = new Card
-                {
-                    Id = Guid.NewGuid(),
-                    EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
-                    VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
-                    GymCustomerId = session.PersonType == "gymcustomer" ? session.PersonId : null,
-                    CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
-                };
-                dbContext.Cards.Add(card);
-                await dbContext.SaveChangesAsync(cancellationToken);
-
-                // Карту пишем на устройство только если человек там должен быть (есть уровень доступа).
-                // Иначе SyncCardAsync заново создал бы пользователя на терминале — ровно то, чего не хотим.
-                if (!session.TemporaryOnDevice)
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
-                        catch { }
-                    });
-                }
-
-                return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", card.Id);
+                var saved = await SaveAndReturnAsync(cardNo, session.PersonId, session.PersonType, deviceId, session.TemporaryOnDevice, cancellationToken);
+                return saved.Success
+                    ? new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", saved.CardId)
+                    : new CardCaptureProgressResult("failed", saved.Error, null);
             }
 
             // Check isCurRequestOver without card
@@ -302,31 +285,23 @@ public sealed class DeviceCardCaptureService(
     /// карту на устройство не пишем, иначе он снова там появится.</param>
     private async Task<(bool Success, string? Error, Guid? CardId)> SaveAndReturnAsync(string cardNo, Guid personId, string personType, Guid deviceId, bool temporaryOnDevice, CancellationToken ct)
     {
-        var exists = await dbContext.Cards.AnyAsync(c => c.CardNo == cardNo, ct);
-        if (exists)
-            return (false, "Карта с таким номером уже зарегистрирована.", null);
+        var saved = await credentialStore.SaveCardAsync(personId, personType, cardNo, ct);
+        if (!saved.Success)
+            return saved;
 
-        var card = new Card
-        {
-            Id = Guid.NewGuid(),
-            EmployeeId = personType == "employee" ? personId : null,
-            VisitorId = personType == "visitor" ? personId : null,
-            GymCustomerId = personType == "gymcustomer" ? personId : null,
-            CardNo = cardNo, CardNumber = null, CreatedUtc = DateTime.UtcNow
-        };
-        dbContext.Cards.Add(card);
-        await dbContext.SaveChangesAsync(ct);
-
+        // Карту пишем на устройство только если человек там должен быть (есть уровень доступа).
+        // Иначе SyncCardAsync заново создал бы пользователя на терминале — ровно то, чего не хотим.
         if (!temporaryOnDevice)
         {
+            var cardId = saved.CardId!.Value;
             _ = Task.Run(async () =>
             {
-                try { await syncService.SyncCardAsync(card.Id, deviceId, CancellationToken.None); }
+                try { await syncService.SyncCardAsync(cardId, deviceId, CancellationToken.None); }
                 catch { }
             });
         }
 
-        return (true, null, card.Id);
+        return saved;
     }
 
     private static string Truncate(string s) => s.Length > 32 ? s[..32] : s;

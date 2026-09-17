@@ -4,6 +4,10 @@ using System.Text;
 
 namespace Backend.Infrastructure.Devices;
 
+/// <summary>Ответ ISAPI «как есть»: байты тела и Content-Type (multipart с картинками нельзя читать строкой).</summary>
+/// <param name="StatusCode">HTTP-код; 0 — ответа не было (сеть или таймаут).</param>
+public sealed record IsapiRawResponse(bool Success, int StatusCode, byte[] Body, string? ContentType, bool TimedOut, string? Error);
+
 /// <summary>HTTP-клиент для ISAPI Hikvision с Digest Auth. Поддерживает GET, POST, PUT, multipart/form-data.</summary>
 public sealed class IsapiClient
 {
@@ -251,6 +255,76 @@ public sealed class IsapiClient
         Func<Dictionary<string, (HttpContent Content, string? FileName)>> partsFactory,
         CancellationToken cancellationToken = default)
         => MultipartAsync(HttpMethod.Put, path, partsFactory, cancellationToken);
+
+    /// <summary>
+    /// Запрос с сырым ответом. Следующий порт пробуется, только если к текущему не удалось подключиться:
+    /// повтор долгого блокирующего запроса (захват на станции регистрации) на другом порту запустил бы захват заново.
+    /// Отмена <paramref name="cancellationToken"/> пробрасывается как <see cref="OperationCanceledException"/>.
+    /// </summary>
+    public async Task<IsapiRawResponse> SendRawAsync(
+        HttpMethod method,
+        string path,
+        string? body,
+        string? contentType,
+        CancellationToken cancellationToken = default)
+    {
+        IsapiRawResponse? lastConnectionError = null;
+        foreach (var port in _ports)
+        {
+            var scheme = port == 443 ? "https" : "http";
+            var uri = new Uri($"{scheme}://{_ipAddress}:{port}/{path.TrimStart('/')}");
+
+            using var handler = new HttpClientHandler
+            {
+                Credentials = _credential,
+                PreAuthenticate = false,
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+            };
+            if (scheme == "https")
+                handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+
+            using var client = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(_timeout);
+
+            try
+            {
+                using var request = new HttpRequestMessage(method, uri);
+                request.Headers.ConnectionClose = true;
+                if (body != null)
+                    request.Content = new StringContent(body, Encoding.UTF8, contentType ?? "application/xml");
+
+                using var response = await client.SendAsync(request, cts.Token);
+                var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
+                var status = (int)response.StatusCode;
+                var mediaType = response.Content.Headers.ContentType?.ToString();
+                if (response.IsSuccessStatusCode)
+                    return new IsapiRawResponse(true, status, bytes, mediaType, false, null);
+
+                var error = response.StatusCode switch
+                {
+                    HttpStatusCode.Unauthorized => "Неверный логин или пароль.",
+                    HttpStatusCode.Forbidden => "Доступ запрещён.",
+                    HttpStatusCode.NotFound => "Endpoint не найден (404).",
+                    _ => $"HTTP {status}."
+                };
+                return new IsapiRawResponse(false, status, bytes, mediaType, false, error);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new IsapiRawResponse(false, 0, [], null, true, "Таймаут.");
+            }
+            catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ConnectionError)
+            {
+                lastConnectionError = new IsapiRawResponse(false, 0, [], null, false, ex.InnerException?.Message ?? ex.Message);
+            }
+            catch (HttpRequestException ex)
+            {
+                return new IsapiRawResponse(false, 0, [], null, false, ex.InnerException?.Message ?? "Ошибка сети.");
+            }
+        }
+        return lastConnectionError ?? new IsapiRawResponse(false, 0, [], null, false, "Устройство недоступно.");
+    }
 
     /// <summary>Обратная совместимость: POST multipart с готовым словарём.</summary>
     public Task<(bool Success, string? Content, string? Error)> PostMultipartAsync(

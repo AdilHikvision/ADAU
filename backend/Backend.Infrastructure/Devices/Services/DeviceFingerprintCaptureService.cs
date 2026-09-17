@@ -18,6 +18,8 @@ public sealed class DeviceFingerprintCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
     IServiceScopeFactory scopeFactory,
+    DeviceEnrollmentDetector enrollmentDetector,
+    EnrollerCaptureService enrollerCapture,
     IConfiguration configuration,
     ILogger<DeviceFingerprintCaptureService> logger) : IDeviceFingerprintCaptureService
 {
@@ -51,7 +53,7 @@ public sealed class DeviceFingerprintCaptureService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
 
         string employeeNo;
@@ -96,7 +98,7 @@ public sealed class DeviceFingerprintCaptureService(
         }
 
         if (isEnroller)
-            logger.LogInformation("[CaptureFP] Enroller station: skip UserInfo sync");
+            return enrollerCapture.Start(device, EnrollerCaptureKind.Fingerprint, personId, personType, fingerIndex);
 
         var fpIndex = Math.Clamp(fingerIndex, 1, 10);
         var session = new FpSession
@@ -147,72 +149,39 @@ public sealed class DeviceFingerprintCaptureService(
         var esc = global::System.Security.SecurityElement.Escape(session.EmployeeNo);
         var withEmpXml = $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFingerPrintCond version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><employeeNo>{esc}</employeeNo><fingerNo>{session.FingerIndex}</fingerNo></CaptureFingerPrintCond>""";
 
-        var isEnrollerDevice = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
-        bool ok;
-        string? content;
-        string? err;
-
-        if (isEnrollerDevice)
+        logger.LogDebug("[CaptureFP] POST CaptureFingerPrint (fingerNo only)");
+        var (ok, content, err) = await client.PostAsync(
+            "ISAPI/AccessControl/CaptureFingerPrint", fingerOnlyXml, "application/xml", ct);
+        if (!ok && err != null && (err.Contains("dataType", StringComparison.OrdinalIgnoreCase) || err.Contains("Invalid Content", StringComparison.OrdinalIgnoreCase) || err.Contains("badParameters", StringComparison.OrdinalIgnoreCase)))
         {
-            // Enroller ISAPI: form multipart, часть CaptureFingerPrint (см. документацию Accessories Enrollers).
-            logger.LogDebug("[CaptureFP] Enroller: multipart CaptureFingerPrint first");
+            logger.LogDebug("[CaptureFP] Retrying CaptureFingerPrint with employeeNo + fingerNo");
+            (ok, content, err) = await client.PostAsync(
+                "ISAPI/AccessControl/CaptureFingerPrint", withEmpXml, "application/xml", ct);
+        }
+
+        if (!ok)
+        {
+            logger.LogDebug("[CaptureFP] Retrying CaptureFingerPrint multipart (CaptureFingerPrint part)");
             (ok, content, err) = await client.PostMultipartAsync("ISAPI/AccessControl/CaptureFingerPrint", () => new Dictionary<string, (HttpContent, string?)>
             {
                 ["CaptureFingerPrint"] = (new StringContent(fingerOnlyXml, Encoding.UTF8, "application/xml"), null),
             }, ct);
-            if (!ok)
-            {
-                (ok, content, err) = await client.PostMultipartAsync("ISAPI/AccessControl/CaptureFingerPrint", () => new Dictionary<string, (HttpContent, string?)>
-                {
-                    ["CaptureFingerPrint"] = (new StringContent(withEmpXml, Encoding.UTF8, "application/xml"), null),
-                }, ct);
-            }
-            if (!ok)
-            {
-                logger.LogDebug("[CaptureFP] Enroller: fallback POST application/xml");
-                (ok, content, err) = await client.PostAsync(
-                    "ISAPI/AccessControl/CaptureFingerPrint", fingerOnlyXml, "application/xml", ct);
-                if (!ok && err != null && (err.Contains("dataType", StringComparison.OrdinalIgnoreCase) || err.Contains("Invalid Content", StringComparison.OrdinalIgnoreCase) || err.Contains("badParameters", StringComparison.OrdinalIgnoreCase)))
-                    (ok, content, err) = await client.PostAsync(
-                        "ISAPI/AccessControl/CaptureFingerPrint", withEmpXml, "application/xml", ct);
-            }
         }
-        else
+        if (!ok)
         {
-            logger.LogDebug("[CaptureFP] POST CaptureFingerPrint (fingerNo only)");
-            (ok, content, err) = await client.PostAsync(
-                "ISAPI/AccessControl/CaptureFingerPrint", fingerOnlyXml, "application/xml", ct);
-            if (!ok && err != null && (err.Contains("dataType", StringComparison.OrdinalIgnoreCase) || err.Contains("Invalid Content", StringComparison.OrdinalIgnoreCase) || err.Contains("badParameters", StringComparison.OrdinalIgnoreCase)))
+            (ok, content, err) = await client.PostMultipartAsync("ISAPI/AccessControl/CaptureFingerPrint", () => new Dictionary<string, (HttpContent, string?)>
             {
-                logger.LogDebug("[CaptureFP] Retrying CaptureFingerPrint with employeeNo + fingerNo");
-                (ok, content, err) = await client.PostAsync(
-                    "ISAPI/AccessControl/CaptureFingerPrint", withEmpXml, "application/xml", ct);
-            }
-
-            if (!ok)
-            {
-                logger.LogDebug("[CaptureFP] Retrying CaptureFingerPrint multipart (CaptureFingerPrint part)");
-                (ok, content, err) = await client.PostMultipartAsync("ISAPI/AccessControl/CaptureFingerPrint", () => new Dictionary<string, (HttpContent, string?)>
-                {
-                    ["CaptureFingerPrint"] = (new StringContent(fingerOnlyXml, Encoding.UTF8, "application/xml"), null),
-                }, ct);
-            }
-            if (!ok)
-            {
-                (ok, content, err) = await client.PostMultipartAsync("ISAPI/AccessControl/CaptureFingerPrint", () => new Dictionary<string, (HttpContent, string?)>
-                {
-                    ["CaptureFingerPrint"] = (new StringContent(withEmpXml, Encoding.UTF8, "application/xml"), null),
-                }, ct);
-            }
+                ["CaptureFingerPrint"] = (new StringContent(withEmpXml, Encoding.UTF8, "application/xml"), null),
+            }, ct);
         }
         logger.LogDebug("[CaptureFP] CaptureFingerPrint result: ok={Ok} content={Content} err={Err}",
             ok, content?.Length > 500 ? content[..500] : content ?? "-", err ?? "-");
 
+        // Сессию не удаляем: итог (в том числе failed) заберёт GetProgressAsync, иначе страница получит «idle» и будет ждать вечно.
         if (!ok)
         {
             session.Status = "failed";
             session.Message = err ?? "Устройство не ответило на запрос захвата отпечатка.";
-            Sessions.TryRemove(deviceId, out _);
             return;
         }
 
@@ -262,7 +231,6 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Не удалось получить данные отпечатка. Попробуйте ещё раз.";
-            Sessions.TryRemove(deviceId, out _);
             return;
         }
 
@@ -274,7 +242,6 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Неверный формат данных отпечатка.";
-            Sessions.TryRemove(deviceId, out _);
             return;
         }
 
@@ -282,7 +249,6 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Пустой шаблон отпечатка.";
-            Sessions.TryRemove(deviceId, out _);
             return;
         }
 
@@ -291,20 +257,8 @@ public sealed class DeviceFingerprintCaptureService(
         Guid fpId;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
-            var scopedDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var fp = new Fingerprint
-            {
-                Id = Guid.NewGuid(),
-                EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
-                VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
-                GymCustomerId = session.PersonType == "gymcustomer" ? session.PersonId : null,
-                TemplateData = templateData,
-                FingerIndex = session.FingerIndex,
-                CreatedUtc = DateTime.UtcNow
-            };
-            scopedDb.Fingerprints.Add(fp);
-            await scopedDb.SaveChangesAsync(ct);
-            fpId = fp.Id;
+            var store = scope.ServiceProvider.GetRequiredService<CapturedCredentialStore>();
+            fpId = await store.SaveFingerprintAsync(session.PersonId, session.PersonType, session.FingerIndex, templateData, ct);
         }
 
         // SetUp → Download: второй и следующие пальцы без SetUp часто не принимаются (см. ISAPI Pro 9.12.2.3 / 9.12.2.4)
@@ -322,6 +276,9 @@ public sealed class DeviceFingerprintCaptureService(
 
     public Task<FingerprintCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
+        if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Fingerprint, out var enrollerState))
+            return Task.FromResult(new FingerprintCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId));
+
         if (!Sessions.TryGetValue(deviceId, out var session))
             return Task.FromResult(new FingerprintCaptureProgressResult("idle", "Сессия захвата не найдена.", null));
 

@@ -17,6 +17,9 @@ public sealed class DeviceFaceCaptureService(
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
     IHikvisionSdkClient sdkClient,
+    DeviceEnrollmentDetector enrollmentDetector,
+    EnrollerCaptureService enrollerCapture,
+    CapturedCredentialStore credentialStore,
     IConfiguration configuration,
     ILogger<DeviceFaceCaptureService> logger) : IDeviceFaceCaptureService
 {
@@ -47,7 +50,7 @@ public sealed class DeviceFaceCaptureService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
-        var isEnroller = DeviceEnrollmentProfile.UseEnrollerCaptureFlow(device);
+        var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
 
         string employeeNo;
@@ -92,22 +95,21 @@ public sealed class DeviceFaceCaptureService(
             }
         }
 
+        // Станция регистрации: пользователей и FDLib у неё нет, захват — блокирующий запрос по своей документации.
+        if (isEnroller)
+            return enrollerCapture.Start(device, EnrollerCaptureKind.Face, personId, personType);
+
         var client = CreateClient(device);
         logger.LogInformation(
-            "[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}, Enroller={Enr}",
-            device.Name, device.IpAddress, device.Port, employeeNo, personType, isEnroller);
-        if (isEnroller)
-            logger.LogInformation("[CaptureFace] Enroller station: skip UserInfo sync (ISAPI notSupport on online UserInfo).");
+            "[CaptureFace] Start: Device={Device} ({Ip}:{Port}), EmployeeNo={EmployeeNo}, PersonType={PersonType}",
+            device.Name, device.IpAddress, device.Port, employeeNo, personType);
 
-        if (!isEnroller)
-            await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
+        await EnsureFaceLibraryExistsAsync(client, device, cancellationToken);
 
         // Cancel any previous capture first to avoid "Device Busy"
         await CancelCaptureAsync(device, client, cancellationToken);
 
-        var (success, content, error) = isEnroller
-            ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
-            : await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+        var (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
 
         // If "Device Busy" — cancel and retry once
         if (!success && error != null && error.Contains("deviceBusy", StringComparison.OrdinalIgnoreCase))
@@ -115,9 +117,7 @@ public sealed class DeviceFaceCaptureService(
             logger.LogInformation("[CaptureFace] Device busy, cancelling and retrying...");
             await CancelCaptureAsync(device, client, cancellationToken);
             await Task.Delay(1500, cancellationToken);
-            (success, content, error) = isEnroller
-                ? await StartEnrollerCaptureFaceAsync(client, employeeNo, cancellationToken)
-                : await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
+            (success, content, error) = await StartCaptureFaceAsync(client, employeeNo, cancellationToken);
         }
 
         logger.LogInformation("[CaptureFace] POST result: success={S} error={E} len={L}",
@@ -140,6 +140,10 @@ public sealed class DeviceFaceCaptureService(
 
     public async Task<FaceCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
+        if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Face, out var enrollerState))
+            return new FaceCaptureProgressResult(enrollerState.Status,
+                enrollerState.Status == "completed" ? 100 : null, enrollerState.Message, enrollerState.ResultId);
+
         if (!Sessions.TryGetValue(deviceId, out var session))
             return new FaceCaptureProgressResult("idle", null, "Сессия захвата не найдена. Запустите захват.", null);
 
@@ -273,49 +277,13 @@ public sealed class DeviceFaceCaptureService(
 
                 if (imageData is { Length: > 0 })
                 {
-                    var facesPath = configuration["Storage:FacesPath"]
-                        ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
-                    Directory.CreateDirectory(facesPath);
-                    var fileName = $"{Guid.NewGuid():N}.jpg";
-                    await File.WriteAllBytesAsync(Path.Combine(facesPath, fileName), imageData, cancellationToken);
-
-                    // Remove old faces for this person (keep only one)
-                    var oldFaces = session.PersonType == "employee"
-                        ? await dbContext.Faces.Where(f => f.EmployeeId == session.PersonId).ToListAsync(cancellationToken)
-                        : session.PersonType == "gymcustomer"
-                            ? await dbContext.Faces.Where(f => f.GymCustomerId == session.PersonId).ToListAsync(cancellationToken)
-                            : await dbContext.Faces.Where(f => f.VisitorId == session.PersonId).ToListAsync(cancellationToken);
-                    if (oldFaces.Count > 0)
-                    {
-                        dbContext.Faces.RemoveRange(oldFaces);
-                        // Delete old image files
-                        foreach (var old in oldFaces)
-                        {
-                            try
-                            {
-                                var oldPath = Path.Combine(facesPath, old.FilePath.TrimStart('/', '\\'));
-                                if (File.Exists(oldPath)) File.Delete(oldPath);
-                            }
-                            catch { }
-                        }
-                    }
-
-                    var face = new Face
-                    {
-                        Id = Guid.NewGuid(),
-                        EmployeeId = session.PersonType == "employee" ? session.PersonId : null,
-                        VisitorId = session.PersonType == "visitor" ? session.PersonId : null,
-                        GymCustomerId = session.PersonType == "gymcustomer" ? session.PersonId : null,
-                        FilePath = fileName, FDID = 1, CreatedUtc = DateTime.UtcNow
-                    };
-                    dbContext.Faces.Add(face);
-                    await dbContext.SaveChangesAsync(cancellationToken);
+                    var faceId = await credentialStore.SaveFaceAsync(session.PersonId, session.PersonType, imageData, cancellationToken);
 
                     // Снимок уже у нас — теперь убираем временную запись с устройства.
                     await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                     return new FaceCaptureProgressResult("completed", 100,
                         "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.",
-                        face.Id);
+                        faceId);
                 }
                 // Снимок не пришёл — временную запись всё равно убираем.
                 await CleanupTemporaryAsync(deviceId, session, cancellationToken);
@@ -459,55 +427,6 @@ public sealed class DeviceFaceCaptureService(
         {
             logger.LogDebug(ex, "[CaptureFace] HTTP Cancel exception (non-fatal)");
         }
-    }
-
-    /// <summary>
-    /// Энроллер (ISAPI Accessories Enrollers): сначала multipart, часть CaptureFace + XML; при неудаче — полная цепочка как у терминала.
-    /// </summary>
-    private async Task<(bool Success, string? Content, string? Error)> StartEnrollerCaptureFaceAsync(
-        IsapiClient client, string employeeNo, CancellationToken ct)
-    {
-        var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
-        var fdid = configuration["Hikvision:CaptureFaceFDID"]?.Trim();
-        if (string.IsNullOrEmpty(fdid)) fdid = "1";
-        var esc = global::System.Security.SecurityElement.Escape(employeeNo);
-        var escFdid = global::System.Security.SecurityElement.Escape(fdid);
-        var ns = "http://www.isapi.org/ver20/XMLSchema";
-        var mpMinimalUrl =
-            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
-        var mpMinimalBinary =
-            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><captureInfrared>false</captureInfrared><dataType>binary</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
-        var mpWithPersonUrl =
-            $"""<?xml version="1.0" encoding="UTF-8"?><CaptureFaceDataCond version="2.0" xmlns="{ns}"><employeeNo>{esc}</employeeNo><FDID>{escFdid}</FDID><captureInfrared>false</captureInfrared><dataType>url</dataType><readerID>{readerId}</readerID></CaptureFaceDataCond>""";
-
-        var success = false;
-        string? content = null;
-        string? error = null;
-
-        async Task TryMultipart(string label, string path, string xml)
-        {
-            if (success) return;
-            var (ok, c, e) = await client.PostMultipartAsync(path, () => new Dictionary<string, (HttpContent, string?)>
-            {
-                ["CaptureFace"] = (new StringContent(xml, Encoding.UTF8, "application/xml"), null),
-            }, ct);
-            logger.LogInformation("[CaptureFace] Enroller {Label}: success={S} error={E}", label, ok, e ?? "-");
-            if (!ok) return;
-            success = true;
-            content = c;
-            error = e;
-        }
-
-        await TryMultipart("MP minimal url", "ISAPI/AccessControl/CaptureFaceData", mpMinimalUrl);
-        await TryMultipart("MP minimal binary", "ISAPI/AccessControl/CaptureFaceData", mpMinimalBinary);
-        await TryMultipart("MP CaptureFace+person url", "ISAPI/AccessControl/CaptureFaceData", mpWithPersonUrl);
-        await TryMultipart("MP minimal url ?format=xml", "ISAPI/AccessControl/CaptureFaceData?format=xml", mpMinimalUrl);
-
-        if (success)
-            return (true, content, error);
-
-        logger.LogInformation("[CaptureFace] Enroller: multipart не удался, fallback на полную цепочку CaptureFaceData.");
-        return await StartCaptureFaceAsync(client, employeeNo, ct);
     }
 
     private async Task<(bool Success, string? Content, string? Error)> StartCaptureFaceAsync(

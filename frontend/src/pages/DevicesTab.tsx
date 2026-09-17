@@ -177,6 +177,12 @@ function isAnprModel(model: string | null | undefined, serial?: string | null): 
   return ANPR_MODEL_PREFIXES.some((prefix) => src.startsWith(prefix))
 }
 
+/** Станция регистрации DS-K1F…: заводим её типом EnrollerStation (5), иначе захват пойдёт по сценарию терминала. */
+const ENROLLER_DEVICE_TYPE = 5
+function isEnrollerModel(model: string | null | undefined, serial?: string | null): boolean {
+  return (model || serial || '').toUpperCase().startsWith('DS-K1F')
+}
+
 function inferDeviceTypeFromModel(model: string | null | undefined, serial?: string | null): string {
   const src = (model || serial || '').toUpperCase()
   if (!src) return 'other'
@@ -685,7 +691,9 @@ export const DevicesTab = forwardRef((_props, ref) => {
           port: addFromDevice.port,
           location: null,
           // ANPR-камеру нельзя заводить как контроллер: иначе парковочная логика её не подхватит.
-          deviceType: isAnprModel(addFromDevice.model, addFromDevice.deviceIdentifier) ? ANPR_DEVICE_TYPE : 1,
+          deviceType: isAnprModel(addFromDevice.model, addFromDevice.deviceIdentifier)
+            ? ANPR_DEVICE_TYPE
+            : isEnrollerModel(addFromDevice.model, addFromDevice.deviceIdentifier) ? ENROLLER_DEVICE_TYPE : 1,
           username: addDeviceUsername.trim() || null,
           password: addDevicePassword || null,
         }),
