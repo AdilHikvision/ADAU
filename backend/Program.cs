@@ -4270,7 +4270,9 @@ app.MapGet("/api/authentication-records", async (
     string? date,
     Guid? employeeId,
     Guid? departmentId,
+    string? departmentIds,
     Guid? housingBlockId,
+    string? housingBlockIds,
     string? kind,
     AppDbContext dbContext,
     CancellationToken cancellationToken) =>
@@ -4291,10 +4293,10 @@ app.MapGet("/api/authentication-records", async (
         _ => peopleQuery.Where(e => e.Kind == PersonKind.Employee),
     };
     if (employeeId.HasValue) peopleQuery = peopleQuery.Where(e => e.Id == employeeId.Value);
-    var deptScope = await BuildDepartmentScopeAsync(departmentId, dbContext, cancellationToken);
+    var deptScope = await BuildDepartmentScopeForIdsAsync(ParseIdList(departmentId, departmentIds), dbContext, cancellationToken);
     if (deptScope is not null)
         peopleQuery = peopleQuery.Where(e => e.DepartmentId != null && deptScope.Contains(e.DepartmentId.Value));
-    var housingScope = await BuildHousingScopeAsync(housingBlockId, dbContext, cancellationToken);
+    var housingScope = await BuildHousingScopeAsync(ParseIdList(housingBlockId, housingBlockIds), dbContext, cancellationToken);
     if (housingScope is not null)
         peopleQuery = peopleQuery.Where(e => e.HousingBlockId != null && housingScope.Contains(e.HousingBlockId.Value));
 
@@ -5388,15 +5390,30 @@ app.MapPut("/api/attendance-requests/{id:guid}/reject", async (Guid id, ReviewAt
 
 // ─── Report Exports ────────────────────────────────────────────────────────────
 
-// Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
-/// <summary>Блок ЖКХ вместе со всеми вложенными: выбрав корпус, видим и его подъезды.</summary>
-static async Task<HashSet<Guid>?> BuildHousingScopeAsync(Guid? housingBlockId, AppDbContext dbContext, CancellationToken ct)
+// «id1,id2,id3» из query-строки → список Guid. Используется фильтрами с мультивыбором
+// (отделы, блоки ЖКХ). Старый одиночный параметр продолжает работать: оба источника
+// объединяются, дубликаты отбрасываются, мусор молча игнорируется.
+static List<Guid> ParseIdList(Guid? single, string? csv)
 {
-    if (housingBlockId is null) return null;
+    var ids = new List<Guid>();
+    if (single.HasValue) ids.Add(single.Value);
+    if (!string.IsNullOrWhiteSpace(csv))
+        foreach (var part in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (Guid.TryParse(part, out var parsed) && !ids.Contains(parsed))
+                ids.Add(parsed);
+    return ids;
+}
+
+// Id отдела + все его подотделы (рекурсивно) — для фильтра «весь отдел».
+/// <summary>Блоки ЖКХ вместе со всеми вложенными: выбрав корпус, видим и его подъезды.
+/// Пустой список = фильтра нет.</summary>
+static async Task<HashSet<Guid>?> BuildHousingScopeAsync(IReadOnlyCollection<Guid> housingBlockIds, AppDbContext dbContext, CancellationToken ct)
+{
+    if (housingBlockIds.Count == 0) return null;
     var all = await dbContext.HousingBlocks.AsNoTracking()
         .Select(b => new { b.Id, b.ParentId })
         .ToListAsync(ct);
-    var scope = new HashSet<Guid> { housingBlockId.Value };
+    var scope = new HashSet<Guid>(housingBlockIds);
     var grew = true;
     while (grew)
     {
@@ -5411,10 +5428,18 @@ static async Task<HashSet<Guid>?> BuildHousingScopeAsync(Guid? housingBlockId, A
 static async Task<HashSet<Guid>?> BuildDepartmentScopeAsync(Guid? departmentId, AppDbContext dbContext, CancellationToken ct)
 {
     if (departmentId is null) return null;
+    return await BuildDepartmentScopeForIdsAsync(new[] { departmentId.Value }, dbContext, ct);
+}
+
+// Мультивыбор отделов: каждый выбранный разворачивается в своё поддерево,
+// результат — объединение поддеревьев. Пустой список = фильтра нет (все отделы).
+static async Task<HashSet<Guid>?> BuildDepartmentScopeForIdsAsync(IReadOnlyCollection<Guid> departmentIds, AppDbContext dbContext, CancellationToken ct)
+{
+    if (departmentIds.Count == 0) return null;
     var all = await dbContext.Departments.AsNoTracking()
         .Select(d => new { d.Id, d.ParentId })
         .ToListAsync(ct);
-    var scope = new HashSet<Guid> { departmentId.Value };
+    var scope = new HashSet<Guid>(departmentIds);
     var grew = true;
     while (grew)
     {

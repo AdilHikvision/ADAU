@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Spinner } from '../components/atoms'
@@ -80,6 +80,11 @@ function descendantsOf(nodes: { id: string; parentId?: string | null }[], rootId
   return set
 }
 
+/** Список id → стабильная строка для запроса и ключей: порядок выбора на результат не влияет. */
+function idsParam(ids: string[]): string {
+  return [...ids].sort().join(',')
+}
+
 export function AuthenticationRecordsPage() {
   const { t } = useTranslation()
   const { token } = useAuth()
@@ -90,8 +95,11 @@ export function AuthenticationRecordsPage() {
   const [kind, setKind] = useState<PersonKind>('employee')
   const [date, setDate] = useState<string>(todayLocal)
   const [personId, setPersonId] = useState('')
-  const [deptId, setDeptId] = useState('')
-  const [blockId, setBlockId] = useState('')
+  // Отделы и блоки ЖКХ — мультивыбор: фильтр складывается из нескольких групп.
+  const [deptIds, setDeptIds] = useState<string[]>([])
+  const [blockIds, setBlockIds] = useState<string[]>([])
+  const deptParam = useMemo(() => idsParam(deptIds), [deptIds])
+  const blockParam = useMemo(() => idsParam(blockIds), [blockIds])
 
   const [people, setPeople] = useState<PersonItem[]>([])
   const [deptTree, setDeptTree] = useState<GroupNode[]>([])
@@ -99,7 +107,7 @@ export function AuthenticationRecordsPage() {
 
   const [records, setRecords] = useState<AuthRecord[]>([])
   // Проходов за день бывают тысячи — режем на страницы; смена фильтров возвращает на первую.
-  const [page, setPage] = usePageReset(`${kind}|${date}|${personId}|${deptId}|${blockId}`)
+  const [page, setPage] = usePageReset(`${kind}|${date}|${personId}|${deptParam}|${blockParam}`)
   const [error, setError] = useState<string | null>(null)
   // Кнопка «Обновить» перезапрашивает те же фильтры — меняем счётчик, а не состояние загрузки.
   const [reloadTick, setReloadTick] = useState(0)
@@ -140,17 +148,17 @@ export function AuthenticationRecordsPage() {
 
   // Показанные данные отстают от фильтров ровно пока идёт запрос — отдельный
   // флаг загрузки не нужен (и не заставляет эффект синхронно менять state).
-  const requestKey = [date, kind, personId, deptId, blockId, reloadTick].join('|')
+  const requestKey = [date, kind, personId, deptParam, blockParam, reloadTick].join('|')
   const loading = loadedKey !== requestKey
 
   useEffect(() => {
     if (!token) return
     let cancelled = false
     const params = new URLSearchParams({ date, kind })
-    // Человек важнее отдела/блока: выбрано что-то одно.
+    // Человек важнее отделов/блоков: выбрано что-то одно.
     if (personId) params.set('employeeId', personId)
-    else if (deptId) params.set('departmentId', deptId)
-    else if (blockId) params.set('housingBlockId', blockId)
+    else if (deptParam) params.set('departmentIds', deptParam)
+    else if (blockParam) params.set('housingBlockIds', blockParam)
     void apiRequest<AuthRecord[]>(`/api/authentication-records?${params}`, { token })
       .then((list) => {
         if (cancelled) return
@@ -165,16 +173,22 @@ export function AuthenticationRecordsPage() {
         setLoadedKey(requestKey)
       })
     return () => { cancelled = true }
-  }, [token, date, kind, personId, deptId, blockId, requestKey])
+  }, [token, date, kind, personId, deptParam, blockParam, requestKey])
 
   const residents = kind === 'resident'
+  // Окно выбора одинаково работает с отделами и блоками ЖКХ — отличается только источник.
+  const groupNodes: GroupNode[] = residents ? blocks : deptTree
+  const selectedGroupIds = residents ? blockIds : deptIds
+  /** Имена выбранных групп в порядке дерева — для подписи кнопки фильтра. */
+  const selectedGroupNames = (): string[] =>
+    groupNodes.filter((n) => selectedGroupIds.includes(n.id)).map((n) => n.name)
 
   const switchKind = (next: PersonKind) => {
     if (next === kind) return
     setKind(next)
     setPersonId('')
-    setDeptId('')
-    setBlockId('')
+    setDeptIds([])
+    setBlockIds([])
     setPickerGroupId(null)
     setGroupSearch('')
     setPersonSearch('')
@@ -189,34 +203,32 @@ export function AuthenticationRecordsPage() {
 
   const pickPerson = (id: string) => {
     setPersonId(id)
-    setDeptId('')
-    setBlockId('')
+    setDeptIds([])
+    setBlockIds([])
     setPickerOpen(false)
   }
 
-  const pickWholeGroup = (id: string) => {
+  const clearSelection = () => { setPersonId(''); setDeptIds([]); setBlockIds([]) }
+
+  // Группы накапливаются — окно не закрывается, чтобы можно было отметить несколько.
+  const toggleGroup = (id: string) => {
     setPersonId('')
-    if (residents) { setBlockId(id); setDeptId('') }
-    else { setDeptId(id); setBlockId('') }
-    setPickerOpen(false)
+    const applyToggle = (prev: string[]) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    if (residents) setBlockIds(applyToggle)
+    else setDeptIds(applyToggle)
   }
 
   const selectionLabel = (): string => {
     const person = people.find((p) => p.id === personId)
     if (person) return `${person.firstName} ${person.lastName}`
-    if (deptId) {
-      const dept = deptTree.find((d) => d.id === deptId)
-      if (dept) return `${dept.name} · ${t('workHours.wholeDept')}`
-    }
-    if (blockId) {
-      const block = blocks.find((b) => b.id === blockId)
-      if (block) return `${block.name} · ${t('authRecords.wholeBlock')}`
-    }
+    const names = selectedGroupNames()
+    if (names.length === 1) return `${names[0]} · ${t(residents ? 'authRecords.wholeBlock' : 'workHours.wholeDept')}`
+    // Много групп — два первых имени и счётчик остальных, иначе кнопка расползается.
+    if (names.length > 1) return names.length === 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
     return residents ? t('authRecords.allResidents') : t('workHours.allEmployees')
   }
 
   // Список в правой колонке окна выбора: сузили группой слева + строкой поиска.
-  const groupNodes: GroupNode[] = residents ? blocks : deptTree
   const groupScope = pickerGroupId ? descendantsOf(groupNodes, pickerGroupId) : null
   const personQuery = personSearch.trim().toLowerCase()
   const pickerPeople = people.filter((p) => {
@@ -233,22 +245,39 @@ export function AuthenticationRecordsPage() {
   const groupBtnCls = (active: boolean) =>
     `w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`
 
+  // Строка группы: чекбокс — выбор в фильтр, имя — переход к списку её людей.
+  const groupRow = (n: GroupNode, depth: number): ReactNode => {
+    const checked = selectedGroupIds.includes(n.id)
+    const browsing = pickerGroupId === n.id
+    return (
+      <div
+        key={n.id}
+        className={`flex items-center gap-2 rounded-lg pr-2 transition-colors ${browsing ? 'bg-primary/10' : 'hover:bg-background-light'}`}
+        style={{ paddingLeft: 8 + depth * 16 }}
+      >
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={() => toggleGroup(n.id)}
+          aria-label={n.name}
+          className="h-4 w-4 shrink-0 accent-primary cursor-pointer"
+        />
+        <button
+          type="button"
+          onClick={() => setPickerGroupId(n.id)}
+          className={`flex-1 min-w-0 text-left py-2 text-sm font-bold truncate ${checked || browsing ? 'text-primary' : 'text-text-dark'}`}
+        >
+          {n.name}
+        </button>
+      </div>
+    )
+  }
+
   const renderGroupTree = (parentId: string | null, depth: number): ReactNode[] =>
     groupNodes
       .filter((n) => (n.parentId ?? null) === parentId)
       .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-      .flatMap((n) => [
-        <button
-          key={n.id}
-          type="button"
-          onClick={() => setPickerGroupId(n.id)}
-          className={groupBtnCls(pickerGroupId === n.id)}
-          style={{ paddingLeft: 12 + depth * 16 }}
-        >
-          {n.name}
-        </button>,
-        ...renderGroupTree(n.id, depth + 1),
-      ])
+      .flatMap((n) => [groupRow(n, depth), ...renderGroupTree(n.id, depth + 1)])
 
   return (
     <AppLayout onAction={() => {}}>
@@ -275,6 +304,33 @@ export function AuthenticationRecordsPage() {
                 <span className="truncate">{selectionLabel()}</span>
                 <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
               </button>
+              {/* Выбранные группы — чипами: виден весь список и можно снять по одной. */}
+              {!personId && selectedGroupIds.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {selectedGroupIds.map((id) => {
+                    const node = groupNodes.find((n) => n.id === id)
+                    if (!node) return null
+                    return (
+                      <span key={id} className="inline-flex items-center gap-1 rounded-lg bg-primary/10 pl-2 pr-1 py-0.5 text-[11px] font-bold text-primary">
+                        <span className="truncate max-w-[140px]">{node.name}</span>
+                        <button
+                          type="button"
+                          aria-label={t('authRecords.removeFromSelection', { name: node.name })}
+                          onClick={() => toggleGroup(id)}
+                          className="material-symbols-outlined text-[13px] leading-none hover:text-primary-dark"
+                        >
+                          close
+                        </button>
+                      </span>
+                    )
+                  })}
+                  {selectedGroupIds.length > 1 && (
+                    <button type="button" onClick={clearSelection} className="px-2 py-0.5 text-[11px] font-black uppercase tracking-wide text-text-light hover:text-primary">
+                      {t('authRecords.clearSelection')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -383,19 +439,22 @@ export function AuthenticationRecordsPage() {
                       placeholder={t(residents ? 'authRecords.blockSearchPlaceholder' : 'workHours.deptSearchPlaceholder')}
                       className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
                     />
+                    <p className="px-1 text-[10px] leading-snug text-text-light">
+                      {t(residents ? 'authRecords.multiBlockHint' : 'authRecords.multiDeptHint')}
+                    </p>
                     <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
-                      <button type="button" onClick={() => setPickerGroupId(null)} className={groupBtnCls(pickerGroupId === null)}>
+                      <button
+                        type="button"
+                        onClick={() => { setPickerGroupId(null); clearSelection() }}
+                        className={groupBtnCls(selectedGroupIds.length === 0 && !personId)}
+                      >
                         {t(residents ? 'authRecords.allBlocks' : 'people.allDepartments')}
                       </button>
                       {groupQuery
                         ? groupNodes
                             .filter((n) => n.name.toLowerCase().includes(groupQuery))
                             .sort((a, b) => a.name.localeCompare(b.name))
-                            .map((n) => (
-                              <button key={n.id} type="button" onClick={() => setPickerGroupId(n.id)} className={groupBtnCls(pickerGroupId === n.id)}>
-                                {n.name}
-                              </button>
-                            ))
+                            .map((n) => groupRow(n, 0))
                         : renderGroupTree(null, 0)}
                     </div>
                   </div>
@@ -413,7 +472,7 @@ export function AuthenticationRecordsPage() {
                       <button
                         type="button"
                         onClick={() => pickPerson('')}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${!personId && !deptId && !blockId ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${!personId && selectedGroupIds.length === 0 ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
                       >
                         {t(residents ? 'authRecords.allResidents' : 'workHours.allEmployees')}
                       </button>
@@ -422,17 +481,21 @@ export function AuthenticationRecordsPage() {
                           const groupId = residents ? p.housingBlockId : p.department?.id
                           return groupId != null && groupScope!.has(groupId)
                         }).length
-                        const active = !personId && (residents ? blockId : deptId) === pickerGroupId
+                        const checked = selectedGroupIds.includes(pickerGroupId)
+                        const onLabel = residents ? 'authRecords.selectWholeBlock' : 'workHours.selectWholeDept'
+                        const offLabel = residents ? 'authRecords.unselectWholeBlock' : 'workHours.unselectWholeDept'
                         return (
                           <button
                             type="button"
-                            onClick={() => pickWholeGroup(pickerGroupId)}
-                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${active ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
+                            onClick={() => toggleGroup(pickerGroupId)}
+                            className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${checked ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
                           >
                             <span className="flex items-center gap-2">
-                              <span className="material-symbols-outlined text-base shrink-0">{residents ? 'apartment' : 'groups'}</span>
+                              <span className="material-symbols-outlined text-base shrink-0">
+                                {checked ? 'check_circle' : (residents ? 'apartment' : 'groups')}
+                              </span>
                               <span className="truncate">
-                                {t(residents ? 'authRecords.selectWholeBlock' : 'workHours.selectWholeDept', { count: groupCount })}
+                                {checked ? t(offLabel) : t(onLabel, { count: groupCount })}
                               </span>
                             </span>
                           </button>
@@ -462,6 +525,21 @@ export function AuthenticationRecordsPage() {
                         })
                       )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Итог по группам + подтверждение: мультивыбор окно сам не закрывает. */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-light pt-3">
+                  <p className="text-xs font-bold text-text-light">
+                    {selectedGroupIds.length > 0
+                      ? t('authRecords.selectedCount', { count: selectedGroupIds.length })
+                      : t(residents ? 'authRecords.noBlocksSelected' : 'authRecords.noDeptsSelected')}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {selectedGroupIds.length > 0 && (
+                      <Button type="button" variant="outline" onClick={clearSelection}>{t('authRecords.clearSelection')}</Button>
+                    )}
+                    <Button type="button" onClick={() => setPickerOpen(false)}>{t('common.apply')}</Button>
                   </div>
                 </div>
               </div>
