@@ -6,6 +6,7 @@ import { AppLayout } from '../components/templates'
 import { Button } from '../components/atoms'
 import { ErrorDialog } from '../components/organisms'
 import { apiRequest } from '../lib/api'
+import { maxValidityDate } from '../lib/validity'
 import { PersonBiometricsStep } from './PersonBiometricsStep'
 import { useModule } from '../context/ModuleContext'
 import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
@@ -59,7 +60,8 @@ export function PersonCreatePage() {
     lastName: '',
     gender: '',
     validFrom: new Date().toISOString().slice(0, 10),
-    validTo: isEmployee ? '2037-12-31' : new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    // Дальше предельного срока пропуск не выдаём — в пикере эти даты недоступны.
+    validTo: isEmployee ? maxValidityDate() : new Date(Date.now() + 86400000).toISOString().slice(0, 10),
     onlyVerify: false,
     accessLevelIds: [] as string[],
     departmentId: null as string | null,
@@ -282,6 +284,7 @@ export function PersonCreatePage() {
               <input
                 type="date"
                 value={formData.validFrom}
+                max={maxValidityDate()}
                 onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
                 className={PM_INPUT}
               />
@@ -290,6 +293,7 @@ export function PersonCreatePage() {
               <input
                 type="date"
                 value={formData.validTo}
+                max={maxValidityDate()}
                 onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
                 className={PM_INPUT}
               />

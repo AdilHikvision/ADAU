@@ -820,10 +820,12 @@ public sealed class DevicePersonSyncService(
             genderValue = "unknown";
 
         // Формат без Z — устройства Hikvision (Value/Pro/Controllers) ожидают "yyyy-MM-ddTHH:mm:ss" в локальном времени (из глобальных настроек)
-        // По умолчанию: с сегодняшней даты до 31 дек 2037
+        // По умолчанию: с сегодняшней даты до 31 дек 2034 — это «срок не задан» для устройства.
+        // Дата фиксированная, а не «сегодня + N лет»: иначе она менялась бы каждый день и
+        // при каждой синхронизации переписывалась бы на устройствах.
         var tz = GetTimeZone();
         var todayUtc = DateTime.UtcNow.Date;
-        var defaultEndUtc = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+        var defaultEndUtc = new DateTime(2034, 12, 31, 23, 59, 59, DateTimeKind.Utc);
         var fromUtc = validFromUtc ?? todayUtc;
         var toUtc = validToUtc ?? defaultEndUtc;
         var beginTime = TimeZoneInfo.ConvertTimeFromUtc(fromUtc, tz).ToString("yyyy-MM-ddTHH:mm:ss");
