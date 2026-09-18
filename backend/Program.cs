@@ -58,6 +58,10 @@ foreach (var baseDir in Microsoft.Extensions.Hosting.WindowsServices.WindowsServ
     break;
 }
 
+// Предельный срок действия пропуска: столько же лет стоит пределом в пикере при
+// регистрации (frontend/src/lib/validity.ts). Держать значения согласованными.
+const int MaxValidityYears = 6;
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options =>
 {
@@ -2427,9 +2431,10 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     var entityId = Guid.NewGuid();
     var employeeNo = entityId.ToString("N")[..32];
 
-    // По умолчанию: с сегодняшней даты до 31 дек 2037
+    // По умолчанию: с сегодняшней даты на MaxValidityYears вперёд. Тот же предел стоит
+    // в пикере при регистрации, иначе пустое поле «действителен до» обходило бы его.
     var defaultValidFrom = DateTime.UtcNow.Date;
-    var defaultValidTo = new DateTime(2037, 12, 31, 23, 59, 59, DateTimeKind.Utc);
+    var defaultValidTo = defaultValidFrom.AddYears(MaxValidityYears).AddDays(1).AddSeconds(-1);
     var companyId = request.CompanyId;
     if (companyId == null)
     {

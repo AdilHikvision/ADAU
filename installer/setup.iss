@@ -45,7 +45,7 @@ Source: "..\installer\uninstall-nginx.ps1";        DestDir: "{app}"; Flags: igno
 
 [Icons]
 Name: "{group}\ADAU Dashboard"; Filename: "http://localhost:5055/system"
-Name: "{group}\ADAU (LAN via nginx)"; Filename: "http://localhost/system"
+Name: "{group}\ADAU (LAN via nginx)"; Filename: "https://localhost/system"
 
 [UninstallRun]
 Filename: "powershell.exe"; \
@@ -252,7 +252,7 @@ begin
   EnableLanCheckbox.Parent  := DbPage.Surface;
   EnableLanCheckbox.Top     := Y;
   EnableLanCheckbox.Width   := DbPage.SurfaceWidth;
-  EnableLanCheckbox.Caption := 'Make the app available on the local network (nginx on port 80)';
+  EnableLanCheckbox.Caption := 'Make the app available on the local network (HTTPS via nginx)';
   EnableLanCheckbox.Checked := True;
   Y := Y + ScaleY(26);
 
@@ -428,13 +428,14 @@ begin
     else
       InstallSucceeded := True;
 
-    { ── Optional: nginx LAN reverse proxy (port 80 -> 127.0.0.1:5055) ── }
+    { ── Optional: nginx LAN reverse proxy (HTTPS 443 -> 127.0.0.1:5055; HTTP 80 redirects) ── }
     if InstallSucceeded and EnableLanCheckbox.Checked and (not IsUpdate) then
     begin
       NginxLogPath := ExpandConstant('{userdocs}') + '\ADAU-install-nginx.log';
       NginxParams :=
         '-ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\install-nginx.ps1') + '"' +
-        ' -BackendPort 5055 -ListenPort 80' +
+        ' -BackendPort 5055 -ListenPort 80 -HttpsPort 443' +
+        ' -BackendExe "' + ExpandConstant('{commonpf}\ProjectX\Backend\backend.exe') + '"' +
         ' -ConfTemplate "' + ExpandConstant('{tmp}\projectx-nginx.conf') + '"' +
         ' -LogPath "' + NginxLogPath + '"';
 

@@ -89,10 +89,10 @@ Default URL after install:
 
 - local (Kestrel, loopback): `http://localhost:5055`
 - dashboard page: `http://localhost:5055/system`
-- LAN (via nginx, if enabled): `http://<server-ip>` and `http://<server-ip>/system`
+- LAN (via nginx, if enabled): `https://<server-ip>` and `https://<server-ip>/system`
 
 The backend (Kestrel) binds to `127.0.0.1:5055` only. LAN access is provided by an
-nginx reverse proxy on port 80 — see section 3a.
+nginx reverse proxy on port 443 (HTTPS); port 80 only redirects there — see section 3a.
 
 ### 2a) Native PostgreSQL (no Docker)
 
@@ -128,31 +128,47 @@ Tray monitor behavior:
 - left click opens local service manager page
 - context menu: `Start Server`, `Stop Server`, `Restart Server`, `Open Service Manager`
 
-## 3a) LAN access via nginx
+## 3a) LAN access via nginx (HTTPS)
 
 The backend listens on loopback only (`http://127.0.0.1:5055`). To make the app
 reachable from other machines on the local network, an nginx reverse proxy is put
-in front on port 80.
+in front on port 443. Plain HTTP on port 80 only issues a 301 to HTTPS.
+
+**Why HTTPS and not plain HTTP.** Browsers treat `http://<ip>` as an insecure context
+and disable `crypto.randomUUID`, the clipboard API, `getUserMedia` (webcam capture) and
+geolocation. Over plain HTTP those features silently fail.
+
+The certificate is **self-signed**, issued on first install by
+`backend.exe --make-tls-cert <dir>` into `%ProgramData%\ProjectX\nginx\ssl`
+(`server.crt` + `server.key`, key readable by SYSTEM and Administrators only).
+Its SAN covers `localhost`, the machine name and every IPv4 address of the server;
+add more names with `-ExtraCertHosts "dns1,10.0.0.5"`. Valid for 5 years.
+Each browser shows a warning on first visit that has to be accepted once —
+after that the origin counts as a secure context and the features above work.
+The certificate is never reissued automatically: delete both files and re-run
+`install-nginx.ps1` to get a new one (browsers will ask to accept it again).
 
 The installer wizard offers an **"Enable LAN access via nginx on port 80"** checkbox
 (Security page, on by default). When checked, the installer runs `install-nginx.ps1`,
 which:
 
 - downloads nginx (Windows) + `nssm` (service wrapper) — needs internet on first run
-- renders `nginx\projectx-nginx.conf` (substituting listen/backend ports) into
+- issues the self-signed certificate if `ssl\server.crt` / `ssl\server.key` are absent
+- renders `nginx\projectx-nginx.conf` (substituting ports and certificate paths) into
   `<install>\conf\nginx.conf`
 - validates the config (`nginx -t`)
 - registers the **`ProjectXNginx`** Windows service (auto-start)
-- opens the Windows Firewall for inbound TCP 80
+- opens the Windows Firewall for inbound TCP 443 and 80
 - starts the service
 
-After install the app is reachable at `http://<server-ip>` from the LAN.
+After install the app is reachable at `https://<server-ip>` from the LAN.
 
 Run / re-run manually:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installer\install-nginx.ps1 `
-  -BackendPort 5055 -ListenPort 80
+  -BackendPort 5055 -ListenPort 80 -HttpsPort 443 `
+  -BackendExe "C:\Program Files\ProjectX\Backend\backend.exe"
 ```
 
 Remove just the proxy:
@@ -169,7 +185,8 @@ Notes:
   from `127.0.0.1`, so the local service-control endpoints would treat LAN clients
   as local. Set a **Local Control Key** during install (and send it via the
   `X-Local-Control-Key` header) to protect Start/Stop/Restart over the LAN.
-- For a non-standard port, pass `-ListenPort <port>` (the firewall rule follows it).
+- For non-standard ports, pass `-HttpsPort <port>` / `-ListenPort <port>` (firewall rules
+  and the HTTP redirect follow them).
 
 ## 4) Update flow
 

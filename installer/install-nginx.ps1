@@ -7,11 +7,15 @@
     - Downloads nginx (Windows) and nssm (service wrapper) if not already present.
     - Renders the bundled projectx-nginx.conf template (substituting the listen and
       backend ports) into <InstallRoot>\conf\nginx.conf.
+    - Generates a self-signed certificate (via backend.exe --make-tls-cert) if one is
+      not there yet, so the LAN is served over HTTPS: browsers treat plain http://<ip>
+      as an insecure context and disable camera, geolocation and clipboard.
     - Validates the config (nginx -t), registers the service via nssm, opens the
-      Windows Firewall for the listen port, and starts the service.
+      Windows Firewall for both ports, and starts the service.
 
     nginx listens on every interface so the app is reachable by the server's LAN
-    IP (e.g. http://192.0.0.200). The backend (Kestrel) must be bound to loopback
+    IP (e.g. https://192.0.0.200); plain HTTP only redirects there. The backend
+    (Kestrel) must be bound to loopback
     (127.0.0.1) — see install-service.ps1 (-ApiUrls http://127.0.0.1:5055).
 
 .NOTES
@@ -19,7 +23,14 @@
 #>
 param(
     [int]$BackendPort = 5055,
+    # Plain HTTP stays only to redirect to HTTPS.
     [int]$ListenPort = 80,
+    [int]$HttpsPort = 443,
+    # backend.exe can issue the self-signed certificate: --make-tls-cert.
+    # Default is the standard service install path.
+    [string]$BackendExe = "$env:ProgramFiles\ProjectX\Backend\backend.exe",
+    # Extra names/addresses for the certificate (comma separated): external DNS etc.
+    [string]$ExtraCertHosts = "",
     # Install under ProgramData (no spaces): nssm mangles AppParameters containing
     # quoted spaced paths, so a space-free prefix avoids the whole quoting problem.
     [string]$InstallRoot = "$env:ProgramData\ProjectX\nginx",
@@ -120,10 +131,39 @@ try {
         Write-Host "nssm already present at $nssmExe"
     }
 
-    # ── 3) render config ────────────────────────────────────────────────────────
-    Write-Host "Rendering nginx.conf (listen=$ListenPort, backend=127.0.0.1:$BackendPort) ..."
+    # --- 3) TLS certificate ---
+    # The certificate is issued by backend.exe: Windows PowerShell 5.1 cannot export
+    # a private key to PEM, and nginx accepts PEM only.
+    $sslDir = Join-Path $InstallRoot "ssl"
+    $certPath = Join-Path $sslDir "server.crt"
+    $keyPath = Join-Path $sslDir "server.key"
+    if ((Test-Path $certPath) -and (Test-Path $keyPath)) {
+        # Do not reissue: the certificate has already been accepted in browsers.
+        Write-Host "TLS certificate already present at $sslDir"
+    }
+    elseif (Test-Path $BackendExe) {
+        Write-Host "Generating self-signed TLS certificate ..."
+        & $BackendExe --make-tls-cert $sslDir $ExtraCertHosts | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "backend.exe --make-tls-cert failed (exit $LASTEXITCODE)." }
+        if (-not (Test-Path $certPath) -or -not (Test-Path $keyPath)) {
+            throw "Certificate was not created at $sslDir."
+        }
+    }
+    else {
+        throw "backend.exe not found at '$BackendExe' - cannot issue the TLS certificate. Pass -BackendExe <path>."
+    }
+
+    # --- 4) render config ---
+    Write-Host "Rendering nginx.conf (https=$HttpsPort, http=$ListenPort -> redirect, backend=127.0.0.1:$BackendPort) ..."
+    # nginx config uses forward slashes in paths even on Windows.
+    $certConf = $certPath.Replace('\', '/')
+    $keyConf = $keyPath.Replace('\', '/')
+    # Redirect keeps a non-standard port explicit; on 443 no port is added.
+    $httpsHostPort = if ($HttpsPort -eq 443) { '$host' } else { '$host' + ":$HttpsPort" }
     $conf = Get-Content $ConfTemplate -Raw
     $conf = $conf.Replace('__LISTEN_PORT__', "$ListenPort").Replace('__BACKEND_PORT__', "$BackendPort")
+    $conf = $conf.Replace('__HTTPS_PORT__', "$HttpsPort").Replace('__HTTPS_HOSTPORT__', $httpsHostPort)
+    $conf = $conf.Replace('__SSL_CERT__', $certConf).Replace('__SSL_KEY__', $keyConf)
     $confDir = Join-Path $nginxDir "conf"
     Set-Content -Path (Join-Path $confDir "nginx.conf") -Value $conf -Encoding ascii
     # nginx needs a logs/temp dir; created on first run, but ensure it exists.
@@ -169,11 +209,13 @@ try {
 
     # ── 6) firewall ──────────────────────────────────────────────────────────────
     if ($OpenFirewall) {
-        $ruleName = "ProjectX nginx ($ListenPort)"
-        Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
-        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort $ListenPort -Profile Any | Out-Null
-        Write-Host "Firewall opened for TCP $ListenPort."
+        foreach ($port in @($ListenPort, $HttpsPort)) {
+            $ruleName = "ProjectX nginx ($port)"
+            Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+            New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
+                -Protocol TCP -LocalPort $port -Profile Any | Out-Null
+            Write-Host "Firewall opened for TCP $port."
+        }
     }
 
     # ── 7) start ──────────────────────────────────────────────────────────────────
@@ -185,7 +227,10 @@ try {
 
     Write-Host ""
     Write-Host "nginx installed and running."
-    Write-Host "  Listening on : http://0.0.0.0:$ListenPort  (LAN: http://<server-ip>:$ListenPort)"
+    $shown = if ($HttpsPort -eq 443) { "" } else { ":$HttpsPort" }
+    Write-Host "  Listening on : https://0.0.0.0:$HttpsPort  (LAN: https://<server-ip>$shown)"
+    Write-Host "  HTTP         : port $ListenPort redirects to HTTPS"
+    Write-Host "  Certificate  : $certPath (self-signed - accept the browser warning once)"
     Write-Host "  Proxying to  : http://127.0.0.1:$BackendPort"
     Write-Host "  Service      : $ServiceName"
 }
