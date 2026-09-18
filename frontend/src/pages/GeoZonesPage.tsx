@@ -74,7 +74,11 @@ export function GeoZonesPage() {
         navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: true })
       )
       setForm((p) => ({ ...p, latitude: pos.coords.latitude.toFixed(6), longitude: pos.coords.longitude.toFixed(6) }))
-    } catch { alert(t('geoZones.failedToGetLocation')) }
+    } catch {
+      // По http браузер блокирует геолокацию — без пояснения это выглядит как поломка.
+      const hint = window.isSecureContext ? '' : `\n${t('geoZones.insecureContextHint')}`
+      alert(t('geoZones.failedToGetLocation') + hint)
+    }
   }
 
   const save = async () => {

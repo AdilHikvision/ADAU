@@ -1361,7 +1361,8 @@
       "latitude": "Enlik",
       "longitude": "Uzunluq",
       "radiusMeters": "Radius (m)"
-    }
+    },
+    "insecureContextHint": "Şəbəkə ünvanı ilə http üzərindən brauzer geolokasiyanı bloklayır: koordinatları əl ilə daxil edin və ya saytı https ilə açın."
   },
   "systemStatus": {
     "title": "Əməliyyat bütövlüyü",
@@ -2419,7 +2420,8 @@
       "namesRequired": "Ad və soyad tələb olunur",
       "saveFailed": "Saxlamaq alınmadı",
       "deleteProfileFailed": "Profili silmək alınmadı",
-      "cameraAccess": "Kameraya giriş alına bilmədi"
+      "cameraAccess": "Kameraya giriş alına bilmədi",
+      "cameraInsecureContext": "Kamera yalnız təhlükəsiz bağlantıda işləyir (https və ya localhost). Şəbəkə ünvanı ilə http üzərindən brauzer kameraya icazə vermir — şəkli kompüterdən əlavə edin və ya qeydiyyat stansiyasından çəkin."
     },
     "employeeProfileHint": "İşçi kartı: məlumatlar, şəkil və biometriya.",
     "visitorProfileHint": "Ziyarətçi kartı: məlumatlar, şəkil və biometriya.",

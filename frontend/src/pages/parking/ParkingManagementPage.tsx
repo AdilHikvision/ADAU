@@ -4,6 +4,7 @@ import { AppLayout } from '../../components/templates'
 import { Button, Input } from '../../components/atoms'
 import { PageHeader, Modal } from '../../components/organisms'
 import { apiRequest, getApiBaseUrl } from '../../lib/api'
+import { copyToClipboard } from '../../lib/clipboard'
 import { useAuth } from '../../auth/AuthContext'
 import { useModule } from '../../context/ModuleContext'
 
@@ -1054,9 +1055,11 @@ function CameraModal({ camera, token, onClose }: { camera: ParkingCamera; token:
                             className="min-w-0 flex-1 rounded-lg border border-border-base bg-slate-75 px-3 py-2 font-mono text-xs text-text-dark" />
                         <Button variant="outline" icon={copied ? 'check' : 'content_copy'}
                             onClick={() => {
-                                void navigator.clipboard?.writeText(camera.rtspUrl)
-                                setCopied(true)
-                                window.setTimeout(() => setCopied(false), 2000)
+                                void copyToClipboard(camera.rtspUrl).then((ok) => {
+                                    if (!ok) return
+                                    setCopied(true)
+                                    window.setTimeout(() => setCopied(false), 2000)
+                                })
                             }}>
                             {t(copied ? 'parking.cameras.copied' : 'parking.cameras.copy')}
                         </Button>

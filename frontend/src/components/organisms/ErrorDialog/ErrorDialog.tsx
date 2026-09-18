@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { copyToClipboard } from '../../../lib/clipboard'
 
 /* ═══ Единое окно ошибок: одна крупная понятная фраза сверху, построчные подробности
    (например, что ответило каждое устройство) — ниже, а технический текст прячется
@@ -72,7 +73,7 @@ export function ErrorDialog({
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(rawText)
+      if (!(await copyToClipboard(rawText))) return
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch { /* буфер недоступен — не страшно */ }

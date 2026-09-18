@@ -6,6 +6,7 @@ import { AppLayout } from '../components/templates'
 import { Badge, Button } from '../components/atoms'
 import { PageHeader } from '../components/organisms'
 import { apiRequest, getHubUrl } from '../lib/api'
+import { newId } from '../lib/id'
 import { FaceThumbnail } from '../components/FaceThumbnail'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -276,7 +277,7 @@ export function MonitoringPage() {
   // ── Group management ──────────────────────────────────────────────────────
 
   function addGroup() {
-    const id = crypto.randomUUID()
+    const id = newId('group')
     const defaultName = t('monitoring.newGroup')
     setGroups(prev => [...prev, { id, name: defaultName, doorKeys: [], collapsed: false, visible: true }])
     setEditingGroupId(id)

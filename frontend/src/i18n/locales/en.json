@@ -1361,7 +1361,8 @@
       "latitude": "Latitude",
       "longitude": "Longitude",
       "radiusMeters": "Radius (m)"
-    }
+    },
+    "insecureContextHint": "Over http on a network address the browser blocks geolocation: enter the coordinates manually or open the site over https."
   },
   "systemStatus": {
     "title": "Operational Integrity",
@@ -2419,7 +2420,8 @@
       "namesRequired": "First and last name are required",
       "saveFailed": "Save failed",
       "deleteProfileFailed": "Failed to delete profile",
-      "cameraAccess": "Could not access the camera"
+      "cameraAccess": "Could not access the camera",
+      "cameraInsecureContext": "The camera works only over a secure connection (https or localhost). Over http on a network address the browser denies camera access — add the photo from the computer or capture it on the enrollment station."
     },
     "employeeProfileHint": "Employee card: details, photo and biometrics.",
     "visitorProfileHint": "Visitor card: details, photo and biometrics.",

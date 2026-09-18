@@ -223,7 +223,19 @@ export function PersonBiometricsStep({
       streamRef.current = null
       return
     }
-    navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } })
+    // Вне защищённого контекста (http://<ip> по локальной сети) navigator.mediaDevices нет
+    // вовсе: цепочка через ?. давала undefined, и следующий .then падал с TypeError.
+    // Объясняем причину вместо пустого экрана.
+    const media = navigator.mediaDevices
+    if (!media?.getUserMedia) {
+      setDialog({
+        variant: 'error',
+        title: t('personDetail.errors.cameraAccess'),
+        message: t('personDetail.errors.cameraInsecureContext'),
+      })
+      return
+    }
+    media.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } })
       .then((stream) => {
         streamRef.current = stream
         if (videoRef.current) videoRef.current.srcObject = stream

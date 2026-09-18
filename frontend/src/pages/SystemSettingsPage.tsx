@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input, Toggle } from '../components/atoms'
 import { Modal, PageHeader } from '../components/organisms'
+import { copyToClipboard } from '../lib/clipboard'
 import { CompanyTab } from './CompanyTab'
 import { HousingTab } from './HousingTab'
 import { useModule } from '../context/ModuleContext'
@@ -1766,7 +1767,7 @@ export function SystemSettingsPage() {
                                                         <button
                                                             key={v}
                                                             title={t('systemSettings.templates.clickToCopy')}
-                                                            onClick={() => navigator.clipboard.writeText(v)}
+                                                            onClick={() => { void copyToClipboard(v) }}
                                                             className="font-mono text-[10px] px-2 py-0.5 bg-violet-50 text-violet-700 rounded-lg border border-violet-200 hover:bg-violet-100 transition-colors cursor-copy"
                                                         >
                                                             {v}

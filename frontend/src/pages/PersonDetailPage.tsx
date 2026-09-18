@@ -10,9 +10,12 @@ import { ErrorDialog } from '../components/organisms'
 import { PersonBiometricsStep } from './PersonBiometricsStep'
 import { useModule } from '../context/ModuleContext'
 import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
+import { maxValidityDate } from '../lib/validity'
 import { PM_CARD, PM_INPUT, PM_TITLE, PmField } from './personFormUi'
 
 import { apiRequest, getHubUrl } from '../lib/api'
+import { newId } from '../lib/id'
+import { copyToClipboard } from '../lib/clipboard'
 
 interface PersonSyncProgressEvent {
   syncId: string
@@ -272,7 +275,7 @@ export function PersonDetailPage() {
   useEffect(() => {
     if (!detail) return
     const validFrom = detail.validFromUtc ? detail.validFromUtc.slice(0, 10) : new Date().toISOString().slice(0, 10)
-    const validTo = detail.validToUtc ? detail.validToUtc.slice(0, 10) : '2037-12-31'
+    const validTo = detail.validToUtc ? detail.validToUtc.slice(0, 10) : maxValidityDate()
     
     let cId = detail.companyId ?? null;
     if (!cId && companyMode === 'Single' && companies.length > 0) {
@@ -320,10 +323,7 @@ export function PersonDetailPage() {
     // Generate a unique sync correlation ID. The backend echoes it back in every
     // PersonSyncProgress SignalR event so we know which messages belong to THIS save
     // (and ignore syncs from other tabs / users).
-    const syncId =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `sync-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const syncId = newId('sync')
 
     setSyncWarning(null)
     setSaveLoading(true)
@@ -684,6 +684,7 @@ export function PersonDetailPage() {
                     <input
                       type="date"
                       value={formData.validFrom}
+                      max={maxValidityDate()}
                       onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
                       className={PM_INPUT}
                     />
@@ -692,6 +693,7 @@ export function PersonDetailPage() {
                     <input
                       type="date"
                       value={formData.validTo}
+                      max={maxValidityDate()}
                       onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}
                       className={PM_INPUT}
                     />
@@ -882,9 +884,8 @@ export function PersonDetailPage() {
                           <button
                             type="button"
                             onClick={() => {
-                              void navigator.clipboard?.writeText(newSelfService.password)
-                                .then(() => setPasswordCopied(true))
-                                .catch(() => { /* буфер недоступен — пароль можно выделить вручную */ })
+                              void copyToClipboard(newSelfService.password)
+                                .then((ok) => { if (ok) setPasswordCopied(true) })
                             }}
                             className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-green-700 transition-colors"
                           >
