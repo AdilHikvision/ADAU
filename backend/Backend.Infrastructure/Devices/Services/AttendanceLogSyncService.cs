@@ -15,7 +15,6 @@ namespace Backend.Infrastructure.Devices.Services;
 public sealed class AttendanceLogSyncService(
     AppDbContext db,
     IConfiguration configuration,
-    IDeviceArpStatusService arpStatusService,
     ILogger<AttendanceLogSyncService> logger) : IAttendanceLogSyncService
 {
     public async Task<AttendanceLogSyncResult> SyncAllDevicesAsync(DateTime fromUtc, DateTime toUtc, CancellationToken cancellationToken)
@@ -27,15 +26,11 @@ public sealed class AttendanceLogSyncService(
         if (allDevices.Count == 0)
             return new AttendanceLogSyncResult(0, 0, ["No registered devices."]);
 
-        // Берём только ONLINE устройства, чтобы не висеть на 60-секундных таймаутах офлайновых.
-        var statuses = (await arpStatusService.GetStatusesAsync(cancellationToken))
-            .ToDictionary(x => x.DeviceIdentifier, x => x.Status, StringComparer.OrdinalIgnoreCase);
-        var devices = allDevices
-            .Where(d => statuses.TryGetValue(d.DeviceIdentifier, out var s) && s == DeviceConnectivityStatus.Connected)
-            .ToList();
-        var skippedOffline = allDevices.Count - devices.Count;
-        if (devices.Count == 0)
-            return new AttendanceLogSyncResult(0, 0, [$"All {allDevices.Count} devices are offline — sync skipped."]);
+        // Опрашиваем ВСЕ устройства. Раньше брались только те, у кого статус Connected, но статус
+        // строится на ARP: устройства из другой подсети (ARP туда не доходит) и вся Linux-сборка
+        // считались офлайн и в синхронизацию не попадали вовсе. Недоступное устройство теперь
+        // просто отваливается по таймауту ISAPI и уходит в warnings, а не исключается заранее.
+        var devices = allDevices;
 
         var globalUser = configuration["Hikvision:Username"] ?? "admin";
         var globalPass = (configuration["Hikvision:Password"] ?? "").Trim();
@@ -47,10 +42,8 @@ public sealed class AttendanceLogSyncService(
         var totalAdded = 0;
         var processed = 0;
 
-        logger.LogInformation("LogSync: starting for {Online}/{Total} device(s) online (skipped {Skipped} offline), period {From}..{To}",
-            devices.Count, allDevices.Count, skippedOffline, fromUtc, toUtc);
-        if (skippedOffline > 0)
-            warnings.Add($"Skipped {skippedOffline} offline device(s).");
+        logger.LogInformation("LogSync: starting for all {Total} device(s), period {From}..{To}",
+            devices.Count, fromUtc, toUtc);
 
         foreach (var device in devices)
         {
