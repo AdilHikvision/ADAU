@@ -19,6 +19,9 @@ public sealed class DeviceArpStatusService(
 {
     private readonly ConcurrentDictionary<string, (DeviceConnectivityStatus Status, DateTime? LastSeenUtc, string? Message)> _cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
+    // Таймаут пробы доступности. Устройства в локальной сети отвечают за миллисекунды,
+    // а опрос идёт последовательно — с большим значением цикл не уложился бы в PollInterval.
+    private static readonly TimeSpan ReachabilityTimeout = TimeSpan.FromSeconds(1.5);
     private const int FailuresBeforeOffline = 2;
 
     public Task<DeviceRealtimeStatus?> GetStatusAsync(string deviceIdentifier, CancellationToken cancellationToken = default)
@@ -40,13 +43,12 @@ public sealed class DeviceArpStatusService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            logger.LogWarning("DeviceArpStatusService: ARP доступен только на Windows. Статус устройств не обновляется.");
-            return;
-        }
-
-        logger.LogInformation("DeviceArpStatusService started (ARP-only status check).");
+        // Раньше на не-Windows сервис здесь завершался: ARP есть только в Win32. Кэш статусов
+        // оставался пустым, из-за чего API отдавал все устройства как Offline, а синхронизация
+        // журналов пропускала их все. Теперь вне Windows доступность проверяется по TCP.
+        logger.LogInformation(
+            "DeviceArpStatusService started ({Probe} + ISAPI status check).",
+            OperatingSystem.IsWindows() ? "ARP" : "TCP");
 
         // Общий счётчик отрицательных сигналов: и ARP-fail, и ISAPI-fail увеличивают его. Любой положительный
         // сигнал сбрасывает в 0. Helps против мерцания: устройство Hikvision часто отвечает на ARP из кэша ОС,
@@ -74,7 +76,11 @@ public sealed class DeviceArpStatusService(
                         continue;
                     }
 
-                    var reachable = ArpReachabilityHelper.IsReachable(device.IpAddress);
+                    var reachable = await DeviceReachabilityHelper.IsReachableAsync(
+                        device.IpAddress,
+                        device.Port,
+                        ReachabilityTimeout,
+                        stoppingToken);
 
                     bool? success = null;          // null = негативный сигнал, но без auth-ошибки
                     string? failureMessage = null;
