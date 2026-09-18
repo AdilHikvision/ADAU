@@ -49,7 +49,7 @@ public sealed class DeviceCardCaptureService(
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
-            return new DeviceSyncResult(false, "Устройство не найдено.");
+            return new DeviceSyncResult(false, "Устройство не найдено.", CaptureMessageCodes.DeviceNotFound);
 
         var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
@@ -58,7 +58,7 @@ public sealed class DeviceCardCaptureService(
         if (personType == "employee")
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
-            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
+            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.", CaptureMessageCodes.EmployeeNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -75,7 +75,7 @@ public sealed class DeviceCardCaptureService(
         else if (personType == "gymcustomer")
         {
             var c = await dbContext.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == personId, cancellationToken);
-            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.");
+            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.", CaptureMessageCodes.CustomerNotFound);
             employeeNo = c.Id.ToString("N")[..32];
             if (!isEnroller)
             {
@@ -86,7 +86,7 @@ public sealed class DeviceCardCaptureService(
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
-            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
+            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.", CaptureMessageCodes.VisitorNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -156,7 +156,7 @@ public sealed class DeviceCardCaptureService(
         if (!ok)
         {
             logger.LogWarning("[CaptureCard] FAILED: {Error}", err);
-            return new DeviceSyncResult(false, err ?? "Устройство не поддерживает захват карты. Добавьте карту вручную.");
+            return new DeviceSyncResult(false, err ?? "Устройство не поддерживает захват карты. Добавьте карту вручную.", CaptureMessageCodes.CardCaptureUnsupported);
         }
 
         // Some devices return cardNo immediately in the start response
@@ -179,27 +179,27 @@ public sealed class DeviceCardCaptureService(
     public async Task<CardCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
         if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Card, out var enrollerState))
-            return new CardCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId);
+            return new CardCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId, enrollerState.MessageCode);
 
         if (PendingCardCaptureComplete.TryRemove(deviceId, out var pendingCardId))
-            return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", pendingCardId);
+            return new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", pendingCardId, CaptureMessageCodes.CardCaptured);
 
         if (!Sessions.TryGetValue(deviceId, out var session))
-            return new CardCaptureProgressResult("idle", "Сессия не найдена. Запустите захват.", null);
+            return new CardCaptureProgressResult("idle", "Сессия не найдена. Запустите захват.", null, CaptureMessageCodes.SessionNotFound);
 
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
         {
             Sessions.TryRemove(deviceId, out _);
             await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
-            return new CardCaptureProgressResult("failed", "Устройство не найдено.", null);
+            return new CardCaptureProgressResult("failed", "Устройство не найдено.", null, CaptureMessageCodes.DeviceNotFound);
         }
 
         if ((DateTime.UtcNow - session.StartedUtc).TotalSeconds > 120)
         {
             Sessions.TryRemove(deviceId, out _);
             await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
-            return new CardCaptureProgressResult("failed", "Таймаут захвата.", null);
+            return new CardCaptureProgressResult("failed", "Таймаут захвата.", null, CaptureMessageCodes.CaptureTimeout);
         }
 
         var client = CreateClient(device);
@@ -233,7 +233,7 @@ public sealed class DeviceCardCaptureService(
 
                 var saved = await SaveAndReturnAsync(cardNo, session.PersonId, session.PersonType, deviceId, session.TemporaryOnDevice, cancellationToken);
                 return saved.Success
-                    ? new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", saved.CardId)
+                    ? new CardCaptureProgressResult("completed", "Карта успешно считана и добавлена.", saved.CardId, CaptureMessageCodes.CardCaptured)
                     : new CardCaptureProgressResult("failed", saved.Error, null);
             }
 
@@ -247,7 +247,7 @@ public sealed class DeviceCardCaptureService(
                     {
                         Sessions.TryRemove(deviceId, out _);
             await CleanupTemporaryAsync(deviceId, session.EmployeeNo, session.TemporaryOnDevice, cancellationToken);
-                        return new CardCaptureProgressResult("failed", "Карта не была считана. Приложите карту и повторите.", null);
+                        return new CardCaptureProgressResult("failed", "Карта не была считана. Приложите карту и повторите.", null, CaptureMessageCodes.CardNotRead);
                     }
                 }
             }

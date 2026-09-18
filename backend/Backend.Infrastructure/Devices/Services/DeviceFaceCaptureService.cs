@@ -48,7 +48,7 @@ public sealed class DeviceFaceCaptureService(
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
-            return new DeviceSyncResult(false, "Устройство не найдено.");
+            return new DeviceSyncResult(false, "Устройство не найдено.", CaptureMessageCodes.DeviceNotFound);
 
         var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
@@ -57,7 +57,7 @@ public sealed class DeviceFaceCaptureService(
         if (personType == "employee")
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
-            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
+            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.", CaptureMessageCodes.EmployeeNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -75,7 +75,7 @@ public sealed class DeviceFaceCaptureService(
         else if (personType == "gymcustomer")
         {
             var c = await dbContext.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == personId, cancellationToken);
-            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.");
+            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.", CaptureMessageCodes.CustomerNotFound);
             employeeNo = c.Id.ToString("N")[..32];
             if (!isEnroller)
             {
@@ -86,7 +86,7 @@ public sealed class DeviceFaceCaptureService(
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
-            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
+            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.", CaptureMessageCodes.VisitorNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -126,7 +126,7 @@ public sealed class DeviceFaceCaptureService(
         if (!success)
         {
             logger.LogWarning("[CaptureFace] FAILED: {Error}", error);
-            return new DeviceSyncResult(false, error ?? "Не удалось запустить захват лица.");
+            return new DeviceSyncResult(false, error ?? "Не удалось запустить захват лица.", CaptureMessageCodes.FaceStartFailed);
         }
 
         if (ParseStatusCodeError(content) is { } errMsg)
@@ -142,24 +142,24 @@ public sealed class DeviceFaceCaptureService(
     {
         if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Face, out var enrollerState))
             return new FaceCaptureProgressResult(enrollerState.Status,
-                enrollerState.Status == "completed" ? 100 : null, enrollerState.Message, enrollerState.ResultId);
+                enrollerState.Status == "completed" ? 100 : null, enrollerState.Message, enrollerState.ResultId, enrollerState.MessageCode);
 
         if (!Sessions.TryGetValue(deviceId, out var session))
-            return new FaceCaptureProgressResult("idle", null, "Сессия захвата не найдена. Запустите захват.", null);
+            return new FaceCaptureProgressResult("idle", null, "Сессия захвата не найдена. Запустите захват.", null, CaptureMessageCodes.SessionNotFound);
 
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
         {
             Sessions.TryRemove(deviceId, out _);
                 await CleanupTemporaryAsync(deviceId, session, cancellationToken);
-            return new FaceCaptureProgressResult("failed", null, "Устройство не найдено.", null);
+            return new FaceCaptureProgressResult("failed", null, "Устройство не найдено.", null, CaptureMessageCodes.DeviceNotFound);
         }
 
         if ((DateTime.UtcNow - session.StartedUtc).TotalSeconds > 120)
         {
             Sessions.TryRemove(deviceId, out _);
                 await CleanupTemporaryAsync(deviceId, session, cancellationToken);
-            return new FaceCaptureProgressResult("failed", null, "Таймаут захвата.", null);
+            return new FaceCaptureProgressResult("failed", null, "Таймаут захвата.", null, CaptureMessageCodes.CaptureTimeout);
         }
 
         var client = CreateClient(device);
@@ -239,7 +239,7 @@ public sealed class DeviceFaceCaptureService(
             {
                 Sessions.TryRemove(deviceId, out _);
                 await CleanupTemporaryAsync(deviceId, session, cancellationToken);
-                return new FaceCaptureProgressResult("failed", null, message ?? "Захват лица не удался.", null);
+                return new FaceCaptureProgressResult("failed", null, message ?? "Захват лица не удался.", null, CaptureMessageCodes.FaceCaptureFailed);
             }
 
             if (progress == 100 || !string.IsNullOrWhiteSpace(faceB64))
@@ -283,12 +283,12 @@ public sealed class DeviceFaceCaptureService(
                     await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                     return new FaceCaptureProgressResult("completed", 100,
                         "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.",
-                        faceId);
+                        faceId, CaptureMessageCodes.FaceCaptured);
                 }
                 // Снимок не пришёл — временную запись всё равно убираем.
                 await CleanupTemporaryAsync(deviceId, session, cancellationToken);
                 return new FaceCaptureProgressResult("completed", 100,
-                    "Лицо захвачено на устройстве. Изображение не получено — добавьте лицо с компьютера.", null);
+                    "Лицо захвачено на устройстве. Изображение не получено — добавьте лицо с компьютера.", null, CaptureMessageCodes.FaceCapturedNoImage);
             }
 
             return new FaceCaptureProgressResult("capturing", progress, message, null);

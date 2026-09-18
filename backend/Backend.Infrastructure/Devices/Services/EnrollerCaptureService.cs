@@ -15,7 +15,7 @@ public enum EnrollerCaptureKind
 }
 
 /// <param name="Status">capturing | completed | failed — тот же словарь, что у захвата с терминалов.</param>
-public sealed record EnrollerCaptureState(string Status, string? Message, Guid? ResultId);
+public sealed record EnrollerCaptureState(string Status, string? Message, Guid? ResultId, string? MessageCode = null);
 
 /// <summary>
 /// Захват лица, отпечатка и карты на станции регистрации (DS-K1F…). Запросы станции блокирующие,
@@ -35,12 +35,13 @@ public sealed class EnrollerCaptureService(
 
     private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
 
-    private sealed class Session(EnrollerCaptureKind kind, string prompt)
+    private sealed class Session(EnrollerCaptureKind kind, string prompt, string promptCode)
     {
         public EnrollerCaptureKind Kind { get; } = kind;
         public string Prompt { get; } = prompt;
+        public string PromptCode { get; } = promptCode;
         public CancellationTokenSource Cancellation { get; } = new(SessionTimeout);
-        public volatile EnrollerCaptureState State = new("capturing", prompt, null);
+        public volatile EnrollerCaptureState State = new("capturing", prompt, null, promptCode);
         public volatile bool Superseded;
     }
 
@@ -57,12 +58,19 @@ public sealed class EnrollerCaptureService(
             return new DeviceSyncResult(false, ex.Message);
         }
 
-        var session = new Session(kind, kind switch
-        {
-            EnrollerCaptureKind.Face => "Посмотрите в камеру станции регистрации…",
-            EnrollerCaptureKind.Fingerprint => "Приложите палец к сканеру станции регистрации…",
-            _ => "Приложите карту к считывателю станции регистрации…",
-        });
+        var session = new Session(kind,
+            kind switch
+            {
+                EnrollerCaptureKind.Face => "Посмотрите в камеру станции регистрации…",
+                EnrollerCaptureKind.Fingerprint => "Приложите палец к сканеру станции регистрации…",
+                _ => "Приложите карту к считывателю станции регистрации…",
+            },
+            kind switch
+            {
+                EnrollerCaptureKind.Face => CaptureMessageCodes.EnrollerFacePrompt,
+                EnrollerCaptureKind.Fingerprint => CaptureMessageCodes.EnrollerFingerPrompt,
+                _ => CaptureMessageCodes.EnrollerCardPrompt,
+            });
 
         if (_sessions.TryGetValue(device.Id, out var previous))
         {
@@ -107,14 +115,14 @@ public sealed class EnrollerCaptureService(
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            session.State = Failed(session.Superseded
-                ? "Захват прерван: на станции запущен новый захват."
+            session.State = session.Superseded
+                ? Failed("Захват прерван: на станции запущен новый захват.", CaptureMessageCodes.EnrollerRestarted)
                 : session.Kind switch
                 {
-                    EnrollerCaptureKind.Face => "Время ожидания истекло: лицо не было захвачено станцией регистрации.",
-                    EnrollerCaptureKind.Fingerprint => "Время ожидания истекло: палец не был приложен к сканеру.",
-                    _ => "Время ожидания истекло: карта не была приложена к считывателю.",
-                });
+                    EnrollerCaptureKind.Face => Failed("Время ожидания истекло: лицо не было захвачено станцией регистрации.", CaptureMessageCodes.EnrollerFaceTimeout),
+                    EnrollerCaptureKind.Fingerprint => Failed("Время ожидания истекло: палец не был приложен к сканеру.", CaptureMessageCodes.EnrollerFingerTimeout),
+                    _ => Failed("Время ожидания истекло: карта не была приложена к считывателю.", CaptureMessageCodes.EnrollerCardTimeout),
+                };
         }
         catch (Exception ex)
         {
@@ -136,12 +144,12 @@ public sealed class EnrollerCaptureService(
             token => isapi.GetFaceProgressAsync(client, token),
             ct);
         if (result.Outcome != EnrollerCallOutcome.Captured)
-            return Failed(result.Message ?? "Не удалось захватить лицо.");
+            return Failed(result.Message ?? "Не удалось захватить лицо.", CaptureMessageCodes.FaceCaptureFailed);
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<CapturedCredentialStore>();
         var faceId = await store.SaveFaceAsync(personId, personType, result.Data!, CancellationToken.None);
-        return new EnrollerCaptureState("completed", "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.", faceId);
+        return new EnrollerCaptureState("completed", "Лицо захвачено. Сохраните профиль для синхронизации с устройствами.", faceId, CaptureMessageCodes.FaceCaptured);
     }
 
     private async Task<EnrollerCaptureState> CaptureFingerprintAsync(Session session, IsapiClient client, Guid personId, string personType, int fingerIndex, CancellationToken ct)
@@ -151,12 +159,12 @@ public sealed class EnrollerCaptureService(
             progress: null,
             ct);
         if (result.Outcome != EnrollerCallOutcome.Captured)
-            return Failed(result.Message ?? "Не удалось получить данные отпечатка.");
+            return Failed(result.Message ?? "Не удалось получить данные отпечатка.", CaptureMessageCodes.FingerprintReadFailed);
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<CapturedCredentialStore>();
         var fingerprintId = await store.SaveFingerprintAsync(personId, personType, fingerIndex, result.Data!, CancellationToken.None);
-        return new EnrollerCaptureState("completed", "Отпечаток успешно захвачен.", fingerprintId);
+        return new EnrollerCaptureState("completed", "Отпечаток успешно захвачен.", fingerprintId, CaptureMessageCodes.FingerprintCaptured);
     }
 
     private async Task<EnrollerCaptureState> CaptureCardAsync(Session session, IsapiClient client, Guid personId, string personType, CancellationToken ct)
@@ -167,13 +175,13 @@ public sealed class EnrollerCaptureService(
             progress: null,
             ct);
         if (result.Outcome != EnrollerCallOutcome.Captured)
-            return Failed(result.Message ?? "Не удалось считать карту.");
+            return Failed(result.Message ?? "Не удалось считать карту.", CaptureMessageCodes.CardReadFailed);
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<CapturedCredentialStore>();
         var (success, error, cardId) = await store.SaveCardAsync(personId, personType, result.Data!, CancellationToken.None);
         return success
-            ? new EnrollerCaptureState("completed", "Карта успешно считана и добавлена.", cardId)
+            ? new EnrollerCaptureState("completed", "Карта успешно считана и добавлена.", cardId, CaptureMessageCodes.CardCaptured)
             : Failed(error);
     }
 
@@ -190,7 +198,7 @@ public sealed class EnrollerCaptureService(
         while (true)
         {
             ct.ThrowIfCancellationRequested();
-            session.State = session.State with { Message = session.Prompt };
+            session.State = session.State with { Message = session.Prompt, MessageCode = session.PromptCode };
 
             var result = await start(ct);
             while (result.Outcome == EnrollerCallOutcome.Pending && progress is not null)
@@ -211,7 +219,7 @@ public sealed class EnrollerCaptureService(
         }
     }
 
-    private static EnrollerCaptureState Failed(string? message) => new("failed", message, null);
+    private static EnrollerCaptureState Failed(string? message, string? code = null) => new("failed", message, null, code);
 
     /// <summary>Таймаут HTTP равен сессии: запрос станции висит, пока человек не предъявит лицо, палец или карту.</summary>
     private IsapiClient CreateClient(Device device)

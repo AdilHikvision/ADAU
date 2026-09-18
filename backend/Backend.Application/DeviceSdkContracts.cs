@@ -147,7 +147,9 @@ public interface IDeviceDoorControlService
 }
 
 /// <summary>Результат синхронизации Person/Card/Face/Fingerprint на устройство.</summary>
-public sealed record DeviceSyncResult(bool Success, string? Message);
+/// <summary>MessageCode — необязательный ключ локализации для Message (см. CaptureMessageCodes).
+/// Заполняется там, где сообщение видит пользователь; остальные вызовы не меняются.</summary>
+public sealed record DeviceSyncResult(bool Success, string? Message, string? MessageCode = null);
 
 public interface IDevicePersonSyncService
 {
@@ -175,8 +177,10 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
 }
 
-/// <summary>Результат захвата лица с устройства.</summary>
-public sealed record FaceCaptureProgressResult(string Status, int? Progress, string? Message, Guid? FaceId);
+/// <summary>Результат захвата лица с устройства.
+/// MessageCode — ключ для локализации на клиенте; Message остаётся человекочитаемым запасным
+/// вариантом и для логов, поэтому старые клиенты продолжают работать.</summary>
+public sealed record FaceCaptureProgressResult(string Status, int? Progress, string? Message, Guid? FaceId, string? MessageCode = null);
 
 /// <summary>Захват лица с устройства Hikvision (CaptureFaceData).</summary>
 public interface IDeviceFaceCaptureService
@@ -188,7 +192,7 @@ public interface IDeviceFaceCaptureService
 }
 
 /// <summary>Результат захвата карты с устройства.</summary>
-public sealed record CardCaptureProgressResult(string Status, string? Message, Guid? CardId);
+public sealed record CardCaptureProgressResult(string Status, string? Message, Guid? CardId, string? MessageCode = null);
 
 /// <summary>Захват карты с устройства Hikvision (CaptureCardData / ReadCard).</summary>
 public interface IDeviceCardCaptureService
@@ -198,7 +202,7 @@ public interface IDeviceCardCaptureService
 }
 
 /// <summary>Результат захвата отпечатка с устройства.</summary>
-public sealed record FingerprintCaptureProgressResult(string Status, string? Message, Guid? FingerprintId);
+public sealed record FingerprintCaptureProgressResult(string Status, string? Message, Guid? FingerprintId, string? MessageCode = null);
 
 /// <summary>Захват отпечатка с устройства Hikvision (CaptureFingerData).</summary>
 public interface IDeviceFingerprintCaptureService

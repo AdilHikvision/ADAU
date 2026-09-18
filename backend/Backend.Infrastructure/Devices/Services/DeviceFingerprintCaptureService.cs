@@ -34,6 +34,8 @@ public sealed class DeviceFingerprintCaptureService(
         public DateTime StartedUtc { get; init; } = DateTime.UtcNow;
         public string Status { get; set; } = "starting";
         public string? Message { get; set; }
+        /// <summary>Ключ для перевода Message на клиенте (people.bio.capture.*).</summary>
+        public string? MessageCode { get; set; }
         public Guid? FingerprintId { get; set; }
         /// <summary>Заведён на устройстве только ради захвата (нет уровня доступа) — убрать после завершения.</summary>
         public bool TemporaryOnDevice { get; init; }
@@ -51,7 +53,7 @@ public sealed class DeviceFingerprintCaptureService(
     {
         var device = await dbContext.Devices.FindAsync([deviceId], cancellationToken);
         if (device is null)
-            return new DeviceSyncResult(false, "Устройство не найдено.");
+            return new DeviceSyncResult(false, "Устройство не найдено.", CaptureMessageCodes.DeviceNotFound);
 
         var isEnroller = await enrollmentDetector.IsEnrollerAsync(device, cancellationToken);
         var temporaryOnDevice = false;
@@ -60,7 +62,7 @@ public sealed class DeviceFingerprintCaptureService(
         if (personType == "employee")
         {
             var emp = await dbContext.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.Id == personId, cancellationToken);
-            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.");
+            if (emp is null) return new DeviceSyncResult(false, "Сотрудник не найден.", CaptureMessageCodes.EmployeeNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(emp.EmployeeNo) ? emp.EmployeeNo.Trim() : emp.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -77,7 +79,7 @@ public sealed class DeviceFingerprintCaptureService(
         else if (personType == "gymcustomer")
         {
             var c = await dbContext.GymCustomers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == personId, cancellationToken);
-            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.");
+            if (c is null) return new DeviceSyncResult(false, "Клиент не найден.", CaptureMessageCodes.CustomerNotFound);
             employeeNo = c.Id.ToString("N")[..32];
             if (!isEnroller)
             {
@@ -88,7 +90,7 @@ public sealed class DeviceFingerprintCaptureService(
         else
         {
             var vis = await dbContext.Visitors.AsNoTracking().FirstOrDefaultAsync(v => v.Id == personId, cancellationToken);
-            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.");
+            if (vis is null) return new DeviceSyncResult(false, "Посетитель не найден.", CaptureMessageCodes.VisitorNotFound);
             employeeNo = Truncate(!string.IsNullOrWhiteSpace(vis.DocumentNumber) ? vis.DocumentNumber.Trim() : vis.Id.ToString("N")[..32]);
             if (!isEnroller)
             {
@@ -109,6 +111,7 @@ public sealed class DeviceFingerprintCaptureService(
             FingerIndex = fpIndex,
             Status = "capturing",
             Message = "Приложите палец к считывателю на устройстве...",
+            MessageCode = CaptureMessageCodes.FingerprintPrompt,
             TemporaryOnDevice = temporaryOnDevice
         };
         Sessions[deviceId] = session;
@@ -182,6 +185,7 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = err ?? "Устройство не ответило на запрос захвата отпечатка.";
+            session.MessageCode = CaptureMessageCodes.FingerprintNoResponse;
             return;
         }
 
@@ -231,6 +235,7 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Не удалось получить данные отпечатка. Попробуйте ещё раз.";
+            session.MessageCode = CaptureMessageCodes.FingerprintReadFailed;
             return;
         }
 
@@ -242,6 +247,7 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Неверный формат данных отпечатка.";
+            session.MessageCode = CaptureMessageCodes.FingerprintBadFormat;
             return;
         }
 
@@ -249,6 +255,7 @@ public sealed class DeviceFingerprintCaptureService(
         {
             session.Status = "failed";
             session.Message = "Пустой шаблон отпечатка.";
+            session.MessageCode = CaptureMessageCodes.FingerprintEmptyTemplate;
             return;
         }
 
@@ -271,24 +278,26 @@ public sealed class DeviceFingerprintCaptureService(
 
         session.Status = "completed";
         session.Message = "Отпечаток успешно захвачен.";
+        session.MessageCode = CaptureMessageCodes.FingerprintCaptured;
         session.FingerprintId = fpId;
     }
 
     public Task<FingerprintCaptureProgressResult> GetProgressAsync(Guid deviceId, CancellationToken cancellationToken = default)
     {
         if (enrollerCapture.TryGetProgress(deviceId, EnrollerCaptureKind.Fingerprint, out var enrollerState))
-            return Task.FromResult(new FingerprintCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId));
+            return Task.FromResult(new FingerprintCaptureProgressResult(enrollerState.Status, enrollerState.Message, enrollerState.ResultId, enrollerState.MessageCode));
 
         if (!Sessions.TryGetValue(deviceId, out var session))
-            return Task.FromResult(new FingerprintCaptureProgressResult("idle", "Сессия захвата не найдена.", null));
+            return Task.FromResult(new FingerprintCaptureProgressResult("idle", "Сессия захвата не найдена.", null, CaptureMessageCodes.SessionNotFound));
 
         if ((DateTime.UtcNow - session.StartedUtc).TotalSeconds > 120 && session.Status == "capturing")
         {
             session.Status = "failed";
             session.Message = "Таймаут захвата (120 сек). Приложите палец быстрее.";
+            session.MessageCode = CaptureMessageCodes.FingerprintTimeout;
         }
 
-        var result = new FingerprintCaptureProgressResult(session.Status, session.Message, session.FingerprintId);
+        var result = new FingerprintCaptureProgressResult(session.Status, session.Message, session.FingerprintId, session.MessageCode);
 
         if (session.Status is "completed" or "failed")
             Sessions.TryRemove(deviceId, out _);

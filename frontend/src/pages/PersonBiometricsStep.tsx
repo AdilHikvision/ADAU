@@ -112,6 +112,19 @@ export function PersonBiometricsStep({
   const { token } = useAuth()
   const isEmployee = personType === 'employee'
 
+  /**
+   * Текст хода захвата. Сервер отдаёт messageCode (ключ перевода) и message (текст по-русски,
+   * для логов и старых клиентов). Берём перевод по коду; если кода нет или перевода под него
+   * ещё не завели — показываем текст сервера, в крайнем случае сам статус.
+   */
+  const captureMessage = (prog: { messageCode?: string; message?: string }, status: string): string => {
+    if (prog.messageCode) {
+      return t(`people.bio.capture.${prog.messageCode}`, { defaultValue: prog.message ?? status })
+    }
+    if (prog.message) return prog.message
+    return t(`people.bio.capture.status.${status}`, { defaultValue: status })
+  }
+
   const [person, setPerson] = useState<PersonBio | null>(null)
   const [devices, setDevices] = useState<DeviceRow[]>([])
   const [caps, setCaps] = useState<Record<string, DeviceCapabilities>>({})
@@ -339,18 +352,24 @@ export function PersonBiometricsStep({
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       })
-      if (!start.ok) throw new Error((await start.json().catch(() => ({}))).message || t('personDetail.errors.startCaptureFailed'))
+      if (!start.ok) {
+        const err = await start.json().catch(() => ({}))
+        throw new Error(captureMessage(err, '') || t('personDetail.errors.startCaptureFailed'))
+      }
       for (;;) {
         const r = await fetch(`${getApiBaseUrl()}/api/devices/${deviceId}/${kind}/capture/progress`, {
           headers: { Authorization: `Bearer ${token}` },
         })
         const prog = await r.json().catch(() => ({}))
         const status = String(prog.status ?? '').toLowerCase()
-        setProgress({ kind, text: prog.message ?? status })
+        // Сервер присылает сообщения только по-русски, поэтому показываем перевод по коду.
+        // Сам текст остаётся запасным вариантом — на случай кода, для которого перевода ещё нет.
+        const progressText = captureMessage(prog, status)
+        setProgress({ kind, text: progressText })
         if (status === 'completed') {
           // Устройство может завершить захват без результата — тогда сообщение и есть причина.
-          if (!prog.faceId && !prog.fingerprintId && !prog.cardId && prog.message) {
-            fail(prog.message, {
+          if (!prog.faceId && !prog.fingerprintId && !prog.cardId && (prog.messageCode || prog.message)) {
+            fail(progressText, {
               title: t('errorDialog.captureTitle'),
               hint: t('errorDialog.deviceHint'),
               retry: () => void captureFromDevice(kind),
@@ -360,7 +379,7 @@ export function PersonBiometricsStep({
           break
         }
         // idle — сессии на сервере уже нет (истекла или перезапущена): ждать дальше нечего.
-        if (status === 'failed' || status === 'idle') throw new Error(prog.message || t('personDetail.errors.captureFailed'))
+        if (status === 'failed' || status === 'idle') throw new Error(progressText || t('personDetail.errors.captureFailed'))
         await new Promise((res) => setTimeout(res, 1500))
       }
       await reload(pid)

@@ -1453,7 +1453,7 @@ app.MapPost("/api/devices/{id:guid}/faces/capture", async (
         return Results.BadRequest(new { message = "PersonType должен быть 'employee' или 'visitor'." });
     var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, cancellationToken);
     if (!result.Success)
-        return Results.BadRequest(new { message = result.Message });
+        return Results.BadRequest(new { message = result.Message, messageCode = result.MessageCode });
     return Results.Ok();
 }).RequireAuthorization("Credentials.Manage");
 
@@ -1463,7 +1463,7 @@ app.MapGet("/api/devices/{id:guid}/faces/capture/progress", async (
     CancellationToken cancellationToken) =>
 {
     var progress = await captureService.GetProgressAsync(id, cancellationToken);
-    return Results.Ok(new { progress.Status, progress.Progress, progress.Message, progress.FaceId });
+    return Results.Ok(new { progress.Status, progress.Progress, progress.Message, progress.FaceId, progress.MessageCode });
 }).RequireAuthorization("Credentials.Manage");
 
 app.MapPost("/api/devices/{id:guid}/cards/capture", async (
@@ -1478,7 +1478,7 @@ app.MapPost("/api/devices/{id:guid}/cards/capture", async (
         return Results.BadRequest(new { message = "PersonType должен быть 'employee' или 'visitor'." });
     var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, cancellationToken);
     if (!result.Success)
-        return Results.BadRequest(new { message = result.Message });
+        return Results.BadRequest(new { message = result.Message, messageCode = result.MessageCode });
     return Results.Ok();
 }).RequireAuthorization("Credentials.Manage");
 
@@ -1488,7 +1488,7 @@ app.MapGet("/api/devices/{id:guid}/cards/capture/progress", async (
     CancellationToken cancellationToken) =>
 {
     var progress = await captureService.GetProgressAsync(id, cancellationToken);
-    return Results.Ok(new { progress.Status, progress.Message, progress.CardId });
+    return Results.Ok(new { progress.Status, progress.Message, progress.CardId, progress.MessageCode });
 }).RequireAuthorization("Credentials.Manage");
 
 app.MapPost("/api/devices/{id:guid}/fingerprints/capture", async (
@@ -1504,7 +1504,7 @@ app.MapPost("/api/devices/{id:guid}/fingerprints/capture", async (
     var fingerIndex = Math.Clamp(request.FingerIndex, 1, 10);
     var result = await captureService.StartCaptureAsync(id, personId, request.PersonType, fingerIndex, cancellationToken);
     if (!result.Success)
-        return Results.BadRequest(new { message = result.Message });
+        return Results.BadRequest(new { message = result.Message, messageCode = result.MessageCode });
     return Results.Ok();
 }).RequireAuthorization("Credentials.Manage");
 
@@ -1514,7 +1514,7 @@ app.MapGet("/api/devices/{id:guid}/fingerprints/capture/progress", async (
     CancellationToken cancellationToken) =>
 {
     var progress = await captureService.GetProgressAsync(id, cancellationToken);
-    return Results.Ok(new { progress.Status, progress.Message, progress.FingerprintId });
+    return Results.Ok(new { progress.Status, progress.Message, progress.FingerprintId, progress.MessageCode });
 }).RequireAuthorization("Credentials.Manage");
 
 app.MapGet("/api/devices/{id:guid}/access-control/capabilities", async (
