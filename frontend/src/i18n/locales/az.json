@@ -3138,5 +3138,38 @@
       "telegram": "Telegram",
       "email": "E-poçt"
     }
+  },
+  "peoplePicker": {
+    "multiSelect": "Bir neçə",
+    "singleHint": "Bir nəfər seçin və ya qrupları işarələyin. Bir neçə nəfər üçün «Bir neçə» rejimini açın.",
+    "multiHint": "İnsanları və qrupları qeyd qutuları ilə seçin — müxtəlif qruplardan da olar.",
+    "groupSearch": "Qrup axtar…",
+    "personSearch": "Şəxs axtar…",
+    "allGroups": "Bütün qruplar",
+    "allPeople": "Hamısı",
+    "noneInGroup": "Bu qrupda heç kim yoxdur",
+    "selectWholeGroup": "Bütün qrupu seç ({{count}})",
+    "unselectWholeGroup": "Qrup seçimini ləğv et",
+    "selected": "Seçilib: {{people}} nəfər, {{groups}} qrup",
+    "nothingSelected": "Heç nə seçilməyib",
+    "clear": "Təmizlə"
+  },
+  "accessLevelPeople": {
+    "title": "«{{name}}» səviyyəsindəki insanlar",
+    "open": "İnsanlar",
+    "edit": "Redaktə et",
+    "count": "İnsanlar: {{count}}",
+    "empty": "Bu səviyyəyə hələ heç kim təyin edilməyib.",
+    "add": "İnsan əlavə et",
+    "addTitle": "Giriş səviyyəsi kimə verilsin",
+    "remove": "Səviyyəni ləğv et",
+    "removeConfirm": "«{{name}}» üçün giriş səviyyəsi ləğv edilsin?",
+    "added": "Əlavə edildi: {{count}}",
+    "alreadyAssigned": "Artıq təyin edilmişdi: {{count}}",
+    "syncWarnings": "Qurğularla sinxronizasiya xəbərdarlıqları:",
+    "loadFailed": "İnsanların siyahısı yüklənə bilmədi",
+    "saveFailed": "Təyinatları dəyişmək alınmadı",
+    "kindEmployee": "İşçi",
+    "kindResident": "Tələbə"
   }
 }

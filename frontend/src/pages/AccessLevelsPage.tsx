@@ -3,9 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
 import { Badge, Button, Input } from '../components/atoms'
-import { PageHeader, Modal } from '../components/organisms'
+import { PageHeader, Modal, PeoplePicker, type PickerGroup, type PickerPerson } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
+import { useModule } from '../context/ModuleContext'
 import { apiRequest } from '../lib/api'
+import { loadHousingBlocks } from './housingBlocks'
 
 interface AccessLevelDoor {
   deviceId: string
@@ -22,6 +24,31 @@ interface AccessLevel {
   createdUtc: string
   updatedUtc?: string | null
   doors?: AccessLevelDoor[]
+  /** Считаются раздельно: в «Компании» показываем только работников, в ADAU/ЖКХ — вместе со студентами. */
+  employeeCount?: number
+  residentCount?: number
+}
+
+/** Человек, назначенный на уровень доступа. */
+interface AccessLevelPerson {
+  id: string
+  firstName: string
+  lastName: string
+  employeeNo?: string | null
+  kind: 'employee' | 'resident'
+  departmentName?: string | null
+  housingBlockName?: string | null
+}
+
+/** Человек из справочника — для окна выбора. */
+interface DirectoryPerson {
+  id: string
+  firstName: string
+  lastName: string
+  employeeNo?: string | null
+  department?: { id: string; name: string } | null
+  housingBlockId?: string | null
+  housingBlockName?: string | null
 }
 
 interface Device {
@@ -133,6 +160,109 @@ export function AccessLevelsPage() {
       return terms.every((term) => searchable.includes(term))
     })
   }, [accessLevels, searchQuery])
+
+  // ── Люди на уровне доступа ──────────────────────────────────────────────────
+  // В модуле ADAU/ЖКХ на уровень назначают и работников, и студентов (жильцов);
+  // в «Компании» студентов нет вовсе, поэтому там только работники.
+  const { activeModule } = useModule()
+  const withResidents = activeModule === 'housing'
+  const [peopleItem, setPeopleItem] = useState<AccessLevel | null>(null)
+  const [levelPeople, setLevelPeople] = useState<AccessLevelPerson[]>([])
+  const [peopleLoading, setPeopleLoading] = useState(false)
+  const [peopleError, setPeopleError] = useState<string | null>(null)
+  const [peoplePickerOpen, setPeoplePickerOpen] = useState(false)
+  const [directory, setDirectory] = useState<DirectoryPerson[]>([])
+  const [departments, setDepartments] = useState<PickerGroup[]>([])
+  const [blocks, setBlocks] = useState<PickerGroup[]>([])
+  const [assignSaving, setAssignSaving] = useState(false)
+
+  /** Сколько людей показывать на карточке уровня — по правилам модуля. */
+  const peopleCountOf = (item: AccessLevel) =>
+    (item.employeeCount ?? 0) + (withResidents ? item.residentCount ?? 0 : 0)
+
+  const loadLevelPeople = useCallback(async (levelId: string) => {
+    if (!token) return
+    setPeopleLoading(true)
+    setPeopleError(null)
+    try {
+      // Без kind сервер вернёт оба типа — это и нужно в ADAU/ЖКХ.
+      const query = withResidents ? '' : '?kind=employee'
+      const list = await apiRequest<AccessLevelPerson[]>(`/api/access-levels/${levelId}/people${query}`, { token })
+      setLevelPeople(list)
+    } catch (e) {
+      setLevelPeople([])
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.loadFailed'))
+    } finally {
+      setPeopleLoading(false)
+    }
+  }, [token, withResidents, t])
+
+  async function openPeopleModal(item: AccessLevel) {
+    setPeopleItem(item)
+    setLevelPeople([])
+    await loadLevelPeople(item.id)
+  }
+
+  /** Справочник для окна выбора грузим один раз при первом открытии. */
+  async function openPeoplePicker() {
+    if (!token) return
+    setPeoplePickerOpen(true)
+    if (directory.length > 0) return
+    try {
+      const employees = await apiRequest<DirectoryPerson[]>('/api/employees?isActive=true', { token })
+      const depts = await apiRequest<PickerGroup[]>('/api/departments/tree', { token }).catch(() => [])
+      setDepartments(depts)
+      if (withResidents) {
+        const [residents, housing] = await Promise.all([
+          apiRequest<DirectoryPerson[]>('/api/employees?isActive=true&kind=resident', { token }).catch(() => []),
+          loadHousingBlocks(token).catch(() => []),
+        ])
+        setDirectory([...employees, ...residents])
+        setBlocks(housing)
+      } else {
+        setDirectory(employees)
+      }
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.loadFailed'))
+    }
+  }
+
+  async function assignPeople(personIds: string[]) {
+    if (!token || !peopleItem || personIds.length === 0) return
+    setAssignSaving(true)
+    setPeopleError(null)
+    try {
+      const res = await apiRequest<{ added: number; alreadyAssigned: number; warnings: string[] }>(
+        `/api/access-levels/${peopleItem.id}/people`,
+        { method: 'POST', token, body: JSON.stringify({ personIds }) },
+      )
+      if (res.warnings?.length) {
+        alert(`${t('accessLevelPeople.syncWarnings')}\n${res.warnings.join('\n')}`)
+      }
+      await loadLevelPeople(peopleItem.id)
+      await loadData()
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
+    } finally {
+      setAssignSaving(false)
+    }
+  }
+
+  async function removePerson(person: AccessLevelPerson) {
+    if (!token || !peopleItem) return
+    if (!window.confirm(t('accessLevelPeople.removeConfirm', { name: `${person.firstName} ${person.lastName}` }))) return
+    setAssignSaving(true)
+    setPeopleError(null)
+    try {
+      await apiRequest(`/api/access-levels/${peopleItem.id}/people/${person.id}`, { method: 'DELETE', token })
+      await loadLevelPeople(peopleItem.id)
+      await loadData()
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
+    } finally {
+      setAssignSaving(false)
+    }
+  }
 
   function openCreateModal() {
     setFormData(emptyForm)
@@ -384,23 +514,33 @@ export function AccessLevelsPage() {
                 filteredLevels.map((item) => (
                   <div
                     key={item.id}
-                    className="flex justify-between items-center p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl active:scale-[0.99] transition-all cursor-pointer group border-none"
-                    onClick={() => openEditModal(item)}
+                    className="flex flex-wrap justify-between items-center gap-3 p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl transition-all group border-none"
                   >
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 min-w-0">
                       <div className="w-12 h-12 flex items-center justify-center bg-primary/10 rounded-2xl text-primary-dark group-hover:bg-primary/20 transition-colors shrink-0">
                         <span className="material-symbols-outlined text-2xl !fill-1">
                           {item.id === 'admin' ? 'shield' : item.name.toLowerCase().includes('staff') ? 'badge' : 'key'}
                         </span>
                       </div>
-                      <div>
-                        <h4 className="text-base font-black text-text-dark leading-tight">{item.name}</h4>
+                      <div className="min-w-0">
+                        <h4 className="text-base font-black text-text-dark leading-tight truncate">{item.name}</h4>
                         <p className="text-xs font-bold text-text-light mt-1">
                           {t('accessLevels.assignedZonesProtocol', { count: (item.doors ?? []).length })}
+                          {' · '}
+                          {t('accessLevelPeople.count', { count: peopleCountOf(item) })}
                         </p>
                       </div>
                     </div>
-                    <span className="material-symbols-outlined text-text-light group-hover:text-text-muted transition-colors">chevron_right</span>
+                    {/* Раньше клик по карточке открывал редактирование. Теперь два действия:
+                        настройки уровня и состав людей на нём. */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button type="button" variant="outline" icon="group" onClick={() => openPeopleModal(item)}>
+                        {t('accessLevelPeople.open')}
+                      </Button>
+                      <Button type="button" variant="outline" icon="edit" onClick={() => openEditModal(item)}>
+                        {t('accessLevelPeople.edit')}
+                      </Button>
+                    </div>
                   </div>
                 )))}
             </div>
@@ -579,6 +719,91 @@ export function AccessLevelsPage() {
           </div>
         )}
       </Modal>
+
+      {/* Состав уровня доступа: кто на нём сейчас и добавление новых людей. */}
+      <Modal
+        isOpen={peopleItem !== null}
+        onClose={() => setPeopleItem(null)}
+        title={t('accessLevelPeople.title', { name: peopleItem?.name ?? '' })}
+        size="lg"
+      >
+        <div className="space-y-4">
+          {peopleError && (
+            <div className="p-3 bg-error-bg text-error-text rounded-xl text-sm font-bold">{peopleError}</div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-bold text-text-light uppercase tracking-widest">
+              {t('accessLevelPeople.count', { count: levelPeople.length })}
+            </p>
+            <Button type="button" icon="person_add" onClick={openPeoplePicker} disabled={assignSaving}>
+              {t('accessLevelPeople.add')}
+            </Button>
+          </div>
+
+          {peopleLoading ? (
+            <div className="py-10 text-center text-sm font-bold text-text-light uppercase tracking-widest">{t('common.loading')}</div>
+          ) : levelPeople.length === 0 ? (
+            <div className="py-10 text-center text-sm text-text-light">{t('accessLevelPeople.empty')}</div>
+          ) : (
+            <div className="max-h-96 overflow-y-auto rounded-xl border border-border-light divide-y divide-border-light">
+              {levelPeople.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-text-dark truncate">
+                      {p.firstName} {p.lastName}
+                      {p.employeeNo && <span className="ml-2 text-[10px] font-bold text-text-light">#{p.employeeNo}</span>}
+                    </p>
+                    <p className="text-[10px] text-text-light truncate">
+                      {t(p.kind === 'resident' ? 'accessLevelPeople.kindResident' : 'accessLevelPeople.kindEmployee')}
+                      {(p.departmentName ?? p.housingBlockName) ? ` · ${p.departmentName ?? p.housingBlockName}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePerson(p)}
+                    disabled={assignSaving}
+                    title={t('accessLevelPeople.remove')}
+                    aria-label={t('accessLevelPeople.remove')}
+                    className="shrink-0 p-2 rounded-lg text-text-light hover:text-error-text hover:bg-error-bg transition-colors disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-lg">person_remove</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Выбор людей — тот же попап, что и «Выбор сотрудника» в отчётах. Группы здесь
+          разворачиваем в людей: уровень назначается конкретным людям, не отделу. */}
+      {peoplePickerOpen && (
+      <PeoplePicker
+        onClose={() => setPeoplePickerOpen(false)}
+        title={t('accessLevelPeople.addTitle')}
+        groups={withResidents ? [...departments, ...blocks] : departments}
+        people={directory.map((p): PickerPerson => ({
+          id: p.id,
+          firstName: p.firstName,
+          lastName: p.lastName,
+          employeeNo: p.employeeNo,
+          groupId: p.department?.id ?? p.housingBlockId ?? null,
+          groupName: p.department?.name ?? p.housingBlockName ?? null,
+        }))}
+        selection={{ personIds: [], groupIds: [] }}
+        allowEmpty={false}
+        onApply={({ personIds, groupIds }) => {
+          const fromGroups = groupIds.length === 0 ? [] : directory
+            .filter((p) => {
+              const g = p.department?.id ?? p.housingBlockId ?? null
+              return g != null && groupIds.includes(g)
+            })
+            .map((p) => p.id)
+          const all = Array.from(new Set([...personIds, ...fromGroups]))
+          void assignPeople(all)
+        }}
+      />
+      )}
     </AppLayout>
   )
 }

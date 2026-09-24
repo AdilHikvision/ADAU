@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
 import { Button, Input } from '../components/atoms'
-import { PageHeader, Modal } from '../components/organisms'
+import { PageHeader, Modal, PeoplePicker } from '../components/organisms'
 import { Pagination, usePageReset, pageSlice, PAGE_SIZE } from '../components/molecules'
 import { apiRequest } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
@@ -650,24 +650,24 @@ export function WorkHoursTrackingPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   // Выбор хранится отдельно для каждого типа. Смена модуля страницу не перезагружает,
   // и общий фильтр отправил бы id блоков студентов как отделы сотрудников.
-  const [employeeByKind, setEmployeeByKind] = useState<Record<PersonKind, string>>({ employee: '', resident: '' })
+  const [employeesByKind, setEmployeesByKind] = useState<Record<PersonKind, string[]>>({ employee: [], resident: [] })
   const [groupsByKind, setGroupsByKind] = useState<Record<PersonKind, string[]>>({ employee: [], resident: [] })
-  const filterEmployee = employeeByKind[kind]
-  // Группы — мультивыбор, взаимоисключающ с filterEmployee: у сотрудников это отделы,
-  // у студентов — блоки ЖКХ (отдела у студента нет).
+  const filterEmployees = employeesByKind[kind]
+  // Группы и люди складываются: сервер объединяет списки, поэтому можно взять группу
+  // целиком и вдобавок отдельных людей. У сотрудников группа — отдел, у студентов — блок.
   const filterGroups = groupsByKind[kind]
-  const setFilterEmployee = (id: string) => setEmployeeByKind((prev) => ({ ...prev, [kind]: id }))
+  const setFilterEmployees = (ids: string[]) => setEmployeesByKind((prev) => ({ ...prev, [kind]: ids }))
   const setFilterGroups = (ids: string[]) => setGroupsByKind((prev) => ({ ...prev, [kind]: ids }))
-  // Стабильная строка для запросов и ключей: порядок выбора на результат не влияет.
+  // Стабильные строки для запросов и ключей: порядок выбора на результат не влияет.
   const groupsParam = useMemo(() => [...filterGroups].sort().join(','), [filterGroups])
+  const employeesParam = useMemo(() => [...filterEmployees].sort().join(','), [filterEmployees])
   const toggleFilterGroup = (groupId: string) => {
-    setFilterEmployee('')
     setGroupsByKind((prev) => {
       const cur = prev[kind]
       return { ...prev, [kind]: cur.includes(groupId) ? cur.filter((id) => id !== groupId) : [...cur, groupId] }
     })
   }
-  const clearFilters = () => { setFilterEmployee(''); setFilterGroups([]) }
+  const clearFilters = () => { setFilterEmployees([]); setFilterGroups([]) }
   // Employee picker popup: слева дерево групп, справа люди выбранной группы.
   const [deptTree, setDeptTree] = useState<WhDept[]>([])
   const [blockTree, setBlockTree] = useState<WhDept[]>([])
@@ -677,11 +677,11 @@ export function WorkHoursTrackingPage() {
     groupTree.filter((d) => filterGroups.includes(d.id)).map((d) => d.name)
   /** Группа человека в дереве окна выбора: блок у студента, отдел у сотрудника. */
   const groupIdOf = (e: Employee) => (students ? e.housingBlockId : e.department?.id) ?? null
-  /** Фильтр людей для всех запросов отчёта: тип плюс один человек либо группы. */
+  /** Фильтр людей для всех запросов отчёта: тип плюс выбранные люди и группы. */
   const peopleFilterQuery = (() => {
     const p = new URLSearchParams({ kind })
-    if (filterEmployee) p.set('employeeId', filterEmployee)
-    else if (groupsParam) p.set(students ? 'housingBlockIds' : 'departmentIds', groupsParam)
+    if (employeesParam) p.set('employeeIds', employeesParam)
+    if (groupsParam) p.set(students ? 'housingBlockIds' : 'departmentIds', groupsParam)
     return p.toString()
   })()
   const [mhMonth, setMhMonth] = useState(MH_DEFAULT_MONTH)
@@ -693,16 +693,9 @@ export function WorkHoursTrackingPage() {
   }
 
   const [empPickerOpen, setEmpPickerOpen] = useState(false)
-  const [pickerGroupId, setPickerGroupId] = useState<string | null>(null)
-  const [pickerGroupSearch, setPickerGroupSearch] = useState('')
-  const [pickerEmpSearch, setPickerEmpSearch] = useState('')
   const switchKind = (next: PersonKind) => {
     if (next === kindChoice) return
     setKindChoice(next)
-    // Навигация по дереву относится к прежнему типу; сам выбор у каждого типа свой.
-    setPickerGroupId(null)
-    setPickerGroupSearch('')
-    setPickerEmpSearch('')
   }
   // Ключи подписей, зависящих от типа: у студентов группа — блок ЖКХ, у сотрудников — отдел.
   // Для студентов берём готовые ключи страницы «Autentifikasiya qeydləri» — там то же окно выбора.
@@ -814,9 +807,9 @@ export function WorkHoursTrackingPage() {
           method: 'POST', token,
           body: JSON.stringify({
             to: emailReportTo.trim(), month: mhMonth,
-            employeeId: filterEmployee || null,
-            departmentIds: filterEmployee || students ? null : (groupsParam || null),
-            housingBlockIds: filterEmployee || !students ? null : (groupsParam || null),
+            employeeIds: employeesParam || null,
+            departmentIds: students ? null : (groupsParam || null),
+            housingBlockIds: students ? (groupsParam || null) : null,
             kind,
           }),
         })
@@ -1484,24 +1477,26 @@ useEffect(() => {
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t(kindText.person)}</label>
               <button
                 type="button"
-                onClick={() => { setPickerGroupSearch(''); setPickerEmpSearch(''); setEmpPickerOpen(true) }}
+                onClick={() => setEmpPickerOpen(true)}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2"
               >
                 <span className="truncate">
                   {(() => {
-                    const sel = employees.find((e) => e.id === filterEmployee)
-                    if (sel) return `${sel.firstName} ${sel.lastName}`
-                    const names = selectedGroupNames()
+                    const names = [
+                      ...filterEmployees.map((id) => employees.find((e) => e.id === id)).filter((e) => !!e)
+                        .map((e) => `${e.firstName} ${e.lastName}`),
+                      ...selectedGroupNames().map((name) => `${name} · ${t(kindText.whole)}`),
+                    ]
                     if (names.length === 0) return t(kindText.all)
-                    if (names.length === 1) return `${names[0]} · ${t(kindText.whole)}`
-                    // Много групп — два первых имени и счётчик остальных, иначе кнопка расползается.
+                    if (names.length === 1) return names[0]
+                    // Много выбранных — два первых имени и счётчик остальных, иначе кнопка расползается.
                     return names.length === 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
                   })()}
                 </span>
                 <span className="material-symbols-outlined text-base text-text-light shrink-0">expand_more</span>
               </button>
               {/* Выбранные группы — чипами: видно весь список и можно снять по одной. */}
-              {!filterEmployee && filterGroups.length > 0 && (
+              {filterGroups.length > 0 && (
                 <div className="flex flex-wrap gap-1 pt-1">
                   {filterGroups.map((id) => {
                     const group = groupTree.find((d) => d.id === id)
@@ -1673,174 +1668,30 @@ useEffect(() => {
           </div>
           )}
 
-          {/* Окно выбора: слева дерево групп (отделы у сотрудников, блоки ЖКХ у студентов),
-              справа люди выбранной группы. */}
+          {/* Окно выбора: слева дерево групп (отделы у сотрудников, факультеты у студентов),
+              справа люди; «Несколько» включает накопительный выбор. */}
           {empPickerOpen && (
-            <Modal isOpen title={t(kindText.pickTitle)} onClose={() => setEmpPickerOpen(false)}>
-              {(() => {
-                // Один человек: закрывает окно и сбрасывает группы.
-                const closePick = (id: string) => { setFilterEmployee(id); setFilterGroups([]); setEmpPickerOpen(false) }
-                // Группы — мультивыбор: галочки накапливаются, окно остаётся открытым.
-                // Множество групп-потомков выбранной (включая её саму) — люди подгрупп тоже видны.
-                const descendants = (rootId: string): Set<string> => {
-                  const set = new Set<string>([rootId])
-                  let grew = true
-                  while (grew) {
-                    grew = false
-                    for (const d of groupTree) {
-                      if (d.parentId && set.has(d.parentId) && !set.has(d.id)) { set.add(d.id); grew = true }
-                    }
-                  }
-                  return set
-                }
-                const groupScope = pickerGroupId ? descendants(pickerGroupId) : null
-                const inScope = (e: Employee) => {
-                  const g = groupIdOf(e)
-                  return g != null && groupScope!.has(g)
-                }
-                const empQ = pickerEmpSearch.trim().toLowerCase()
-                const pickerEmps = employees.filter((e) => {
-                  if (groupScope && !inScope(e)) return false
-                  if (empQ && !(`${e.firstName} ${e.lastName}`.toLowerCase().includes(empQ) || (e.employeeNo ?? '').toLowerCase().includes(empQ))) return false
-                  return true
-                })
-                const groupQ = pickerGroupSearch.trim().toLowerCase()
-                // Строка группы: чекбокс — выбор в фильтр, имя — переход к списку её людей.
-                const groupRow = (d: WhDept, depth: number) => {
-                  const checked = filterGroups.includes(d.id)
-                  const browsing = pickerGroupId === d.id
-                  return (
-                    <div
-                      key={d.id}
-                      className={`flex items-center gap-2 rounded-lg pr-2 transition-colors ${browsing ? 'bg-primary/10' : 'hover:bg-background-light'}`}
-                      style={{ paddingLeft: 8 + depth * 16 }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleFilterGroup(d.id)}
-                        aria-label={d.name}
-                        className="h-4 w-4 shrink-0 accent-primary cursor-pointer"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setPickerGroupId(d.id)}
-                        className={`flex-1 min-w-0 text-left py-2 text-sm font-bold truncate ${checked || browsing ? 'text-primary' : 'text-text-dark'}`}
-                      >
-                        {d.name}
-                      </button>
-                    </div>
-                  )
-                }
-                const renderGroups = (parentId: string | null, depth: number): ReactNode[] =>
-                  groupTree
-                    .filter((d) => (d.parentId ?? null) === parentId)
-                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-                    .flatMap((d) => [groupRow(d, depth), ...renderGroups(d.id, depth + 1)])
-                return (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Дерево групп — мультивыбор через галочки */}
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={pickerGroupSearch}
-                        onChange={(e) => setPickerGroupSearch(e.target.value)}
-                        placeholder={t(kindText.groupSearch)}
-                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                      <p className="px-1 text-[10px] leading-snug text-text-light">{t(kindText.hint)}</p>
-                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
-                        <button
-                          type="button"
-                          onClick={() => { setPickerGroupId(null); clearFilters() }}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterGroups.length === 0 && !filterEmployee ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
-                        >
-                          {t(kindText.allGroups)}
-                        </button>
-                        {groupQ
-                          ? groupTree
-                              .filter((d) => d.name.toLowerCase().includes(groupQ))
-                              .sort((a, b) => a.name.localeCompare(b.name))
-                              .map((d) => groupRow(d, 0))
-                          : renderGroups(null, 0)}
-                      </div>
-                    </div>
-                    {/* Люди просматриваемой группы */}
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={pickerEmpSearch}
-                        onChange={(e) => setPickerEmpSearch(e.target.value)}
-                        placeholder={t(kindText.personSearch)}
-                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                      />
-                      <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
-                        <button
-                          type="button"
-                          onClick={() => closePick('')}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${filterEmployee === '' && filterGroups.length === 0 ? 'bg-primary text-white' : 'text-text-dark hover:bg-background-light'}`}
-                        >
-                          {t(kindText.all)}
-                        </button>
-                        {pickerGroupId && (() => {
-                          const groupCount = employees.filter(inScope).length
-                          const checked = filterGroups.includes(pickerGroupId)
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => toggleFilterGroup(pickerGroupId)}
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-bold transition-colors ${checked ? 'bg-primary text-white' : 'text-primary hover:bg-primary/10'}`}
-                            >
-                              <span className="flex items-center gap-2">
-                                <span className="material-symbols-outlined text-base shrink-0">{checked ? 'check_circle' : (students ? 'school' : 'groups')}</span>
-                                <span className="truncate">
-                                  {checked ? t(kindText.unselectWhole) : t(kindText.selectWhole, { count: groupCount })}
-                                </span>
-                              </span>
-                            </button>
-                          )
-                        })()}
-                        {pickerEmps.length === 0 ? (
-                          <p className="px-3 py-4 text-xs text-text-light">{t(kindText.noneInGroup)}</p>
-                        ) : (
-                          pickerEmps.map((e) => {
-                            const active = filterEmployee === e.id
-                            const subtitle = students ? e.housingBlockName : e.department?.name
-                            return (
-                              <button
-                                key={e.id}
-                                type="button"
-                                onClick={() => closePick(e.id)}
-                                className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${active ? 'bg-primary text-white' : 'hover:bg-background-light'}`}
-                              >
-                                <span className={`block text-sm font-bold truncate ${active ? 'text-white' : 'text-text-dark'}`}>{e.firstName} {e.lastName}</span>
-                                {subtitle && <span className={`block text-[10px] truncate ${active ? 'text-white/80' : 'text-text-light'}`}>{subtitle}</span>}
-                              </button>
-                            )
-                          })
-                        )}
-                      </div>
-                    </div>
-                    </div>
-                    {/* Итог по группам + подтверждение: мультивыбор окно сам не закрывает. */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-light pt-3">
-                      <p className="text-xs font-bold text-text-light">
-                        {filterGroups.length > 0
-                          ? t(kindText.selected, { count: filterGroups.length })
-                          : t(kindText.noGroups)}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        {filterGroups.length > 0 && (
-                          <Button type="button" variant="outline" onClick={clearFilters}>{t(kindText.clear)}</Button>
-                        )}
-                        <Button type="button" onClick={() => setEmpPickerOpen(false)}>{t('common.apply')}</Button>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
-            </Modal>
+            <PeoplePicker
+              title={t(kindText.pickTitle)}
+              groups={groupTree}
+              people={employees.map((e) => ({
+                ...e,
+                groupId: groupIdOf(e),
+                groupName: (students ? blockTree.find((b) => b.id === e.housingBlockId)?.name : e.department?.name) ?? null,
+              }))}
+              selection={{ personIds: filterEmployees, groupIds: filterGroups }}
+              onApply={(sel) => { setFilterEmployees(sel.personIds); setFilterGroups(sel.groupIds) }}
+              onClose={() => setEmpPickerOpen(false)}
+              text={{
+                groupSearch: kindText.groupSearch,
+                personSearch: kindText.personSearch,
+                allGroups: kindText.allGroups,
+                allPeople: kindText.all,
+                noneInGroup: kindText.noneInGroup,
+                selectWholeGroup: kindText.selectWhole,
+                unselectWholeGroup: kindText.unselectWhole,
+              }}
+            />
           )}
 
           {/* Schedules — company work time templates */}

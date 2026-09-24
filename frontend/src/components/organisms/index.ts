@@ -1,4 +1,5 @@
 export * from './Modal';
+export * from './PeoplePicker';
 export * from './VisitorPass/VisitorPassActions';
 export * from './ErrorDialog';
 export * from './PageHeader';

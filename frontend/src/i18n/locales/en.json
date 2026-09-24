@@ -3147,5 +3147,38 @@
       "telegram": "Telegram",
       "email": "Email"
     }
+  },
+  "peoplePicker": {
+    "multiSelect": "Multiple",
+    "singleHint": "Pick a person or tick groups. To pick several people turn on \"Multiple\".",
+    "multiHint": "Tick people and groups — people from different groups can be combined.",
+    "groupSearch": "Search group…",
+    "personSearch": "Search person…",
+    "allGroups": "All groups",
+    "allPeople": "All",
+    "noneInGroup": "Nobody in this group",
+    "selectWholeGroup": "Select whole group ({{count}})",
+    "unselectWholeGroup": "Unselect this group",
+    "selected": "Selected: {{people}} people, {{groups}} groups",
+    "nothingSelected": "Nothing selected",
+    "clear": "Clear"
+  },
+  "accessLevelPeople": {
+    "title": "People on \"{{name}}\"",
+    "open": "People",
+    "edit": "Edit",
+    "count": "People: {{count}}",
+    "empty": "Nobody is assigned to this level yet.",
+    "add": "Add people",
+    "addTitle": "Who gets this access level",
+    "remove": "Remove level",
+    "removeConfirm": "Remove this access level from \"{{name}}\"?",
+    "added": "Added: {{count}}",
+    "alreadyAssigned": "Already assigned: {{count}}",
+    "syncWarnings": "Device sync warnings:",
+    "loadFailed": "Failed to load the people list",
+    "saveFailed": "Failed to change the assignments",
+    "kindEmployee": "Employee",
+    "kindResident": "Student"
   }
 }
