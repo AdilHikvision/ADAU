@@ -1699,6 +1699,7 @@ app.MapGet("/api/access-levels/{id:guid}/people", async (
         query = query.Where(x => x.Employee!.Kind == personKind);
 
     var people = await query
+        .OrderBy(x => x.Employee!.LastName).ThenBy(x => x.Employee!.FirstName)
         .Select(x => new AccessLevelPersonResponse(
             x.Employee!.Id,
             x.Employee.FirstName,
@@ -1707,7 +1708,6 @@ app.MapGet("/api/access-levels/{id:guid}/people", async (
             x.Employee.Kind == PersonKind.Resident ? "resident" : "employee",
             x.Employee.Department != null ? x.Employee.Department.Name : null,
             x.Employee.HousingBlock != null ? x.Employee.HousingBlock.Name : null))
-        .OrderBy(x => x.LastName).ThenBy(x => x.FirstName)
         .ToListAsync(cancellationToken);
 
     return Results.Ok(people);
