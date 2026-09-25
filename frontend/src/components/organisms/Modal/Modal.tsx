@@ -11,6 +11,9 @@ interface ModalProps {
     className?: string; // Add className prop
     /** Ширина окна: 'md' — по умолчанию, 'lg'/'xl' — для форм с многоколоночной сеткой. */
     size?: 'md' | 'lg' | 'xl';
+    /** Скрыть крестик и запретить закрытие по фону: для окон, которые нельзя
+     * закрывать, пока идёт длинная операция (например запись на устройства). */
+    hideClose?: boolean;
 }
 
 const WIDTH_BY_SIZE: Record<'md' | 'lg' | 'xl', string> = {
@@ -19,7 +22,7 @@ const WIDTH_BY_SIZE: Record<'md' | 'lg' | 'xl', string> = {
     xl: 'max-w-5xl',
 };
 
-export function Modal({ isOpen, onClose, title, children, fullScreen, actions, className = '', size = 'md' }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, fullScreen, actions, className = '', size = 'md', hideClose = false }: ModalProps) {
     const { t } = useTranslation();
     if (!isOpen) return null;
 
@@ -33,8 +36,8 @@ export function Modal({ isOpen, onClose, title, children, fullScreen, actions, c
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div
-                className="absolute inset-0 bg-text-dark/30 backdrop-blur-sm cursor-pointer"
-                onClick={onClose}
+                className={`absolute inset-0 bg-text-dark/30 backdrop-blur-sm ${hideClose ? '' : 'cursor-pointer'}`}
+                onClick={hideClose ? undefined : onClose}
                 aria-hidden
             />
             <div
@@ -49,14 +52,16 @@ export function Modal({ isOpen, onClose, title, children, fullScreen, actions, c
                     </h2>
                     <div className="flex items-center gap-2">
                         {actions}
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="p-1 rounded-lg text-text-muted hover:text-text-dark hover:bg-slate-75 transition-colors"
-                            aria-label={t('common.close')}
-                        >
-                            <span className="material-symbols-outlined text-xl">close</span>
-                        </button>
+                        {!hideClose && (
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="p-1 rounded-lg text-text-muted hover:text-text-dark hover:bg-slate-75 transition-colors"
+                                aria-label={t('common.close')}
+                            >
+                                <span className="material-symbols-outlined text-xl">close</span>
+                            </button>
+                        )}
                     </div>
                 </div>
                 <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6`}>{children}</div>

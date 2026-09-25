@@ -174,7 +174,11 @@ export function AccessLevelsPage() {
   const [directory, setDirectory] = useState<DirectoryPerson[]>([])
   const [departments, setDepartments] = useState<PickerGroup[]>([])
   const [blocks, setBlocks] = useState<PickerGroup[]>([])
-  const [assignSaving, setAssignSaving] = useState(false)
+  // Запись на устройства идёт не мгновенно: пока она длится, показываем окно
+  // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
+  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove'; count: number; name?: string } | null>(null)
+  const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove'; added: number; alreadyAssigned: number; name?: string; warnings: string[] } | null>(null)
+  const assignSaving = peopleProgress !== null
 
   /** Сколько людей показывать на карточке уровня — по правилам модуля. */
   const peopleCountOf = (item: AccessLevel) =>
@@ -229,38 +233,46 @@ export function AccessLevelsPage() {
 
   async function assignPeople(personIds: string[]) {
     if (!token || !peopleItem || personIds.length === 0) return
-    setAssignSaving(true)
+    setPeopleProgress({ kind: 'assign', count: personIds.length })
     setPeopleError(null)
     try {
       const res = await apiRequest<{ added: number; alreadyAssigned: number; warnings: string[] }>(
         `/api/access-levels/${peopleItem.id}/people`,
         { method: 'POST', token, body: JSON.stringify({ personIds }) },
       )
-      if (res.warnings?.length) {
-        alert(`${t('accessLevelPeople.syncWarnings')}\n${res.warnings.join('\n')}`)
-      }
       await loadLevelPeople(peopleItem.id)
       await loadData()
+      setPeopleResult({
+        kind: 'assign',
+        added: res.added ?? 0,
+        alreadyAssigned: res.alreadyAssigned ?? 0,
+        warnings: res.warnings ?? [],
+      })
     } catch (e) {
       setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
     } finally {
-      setAssignSaving(false)
+      setPeopleProgress(null)
     }
   }
 
   async function removePerson(person: AccessLevelPerson) {
     if (!token || !peopleItem) return
-    if (!window.confirm(t('accessLevelPeople.removeConfirm', { name: `${person.firstName} ${person.lastName}` }))) return
-    setAssignSaving(true)
+    const name = `${person.firstName} ${person.lastName}`
+    if (!window.confirm(t('accessLevelPeople.removeConfirm', { name }))) return
+    setPeopleProgress({ kind: 'remove', count: 1, name })
     setPeopleError(null)
     try {
-      await apiRequest(`/api/access-levels/${peopleItem.id}/people/${person.id}`, { method: 'DELETE', token })
+      const res = await apiRequest<{ removed: number; warnings: string[] }>(
+        `/api/access-levels/${peopleItem.id}/people/${person.id}`,
+        { method: 'DELETE', token },
+      )
       await loadLevelPeople(peopleItem.id)
       await loadData()
+      setPeopleResult({ kind: 'remove', added: 0, alreadyAssigned: 0, name, warnings: res?.warnings ?? [] })
     } catch (e) {
       setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
     } finally {
-      setAssignSaving(false)
+      setPeopleProgress(null)
     }
   }
 
@@ -772,6 +784,60 @@ export function AccessLevelsPage() {
               ))}
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* Пока уровень пишется на устройства: закрыть окно нельзя, чтобы не терять итог. */}
+      <Modal
+        isOpen={peopleProgress !== null}
+        onClose={() => { /* закрытие запрещено: идёт запись на устройства */ }}
+        hideClose
+        title={t(peopleProgress?.kind === 'remove' ? 'accessLevelPeople.removingTitle' : 'accessLevelPeople.addingTitle')}
+      >
+        <div className="flex items-center gap-4 py-2">
+          <div className="w-10 h-10 shrink-0 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+          <p className="text-sm font-bold text-text-dark">
+            {peopleProgress?.kind === 'remove'
+              ? t('accessLevelPeople.removingBody', { name: peopleProgress?.name ?? '' })
+              : t('accessLevelPeople.addingBody', { count: peopleProgress?.count ?? 0 })}
+          </p>
+        </div>
+      </Modal>
+
+      {/* Итог операции: сколько добавлено и что не доехало до устройств. */}
+      <Modal
+        isOpen={peopleResult !== null}
+        onClose={() => setPeopleResult(null)}
+        title={t('accessLevelPeople.doneTitle')}
+      >
+        <div className="space-y-4">
+          <div className="space-y-1 text-sm font-bold text-text-dark">
+            {peopleResult?.kind === 'remove' ? (
+              <p>{t('accessLevelPeople.removedFrom', { name: peopleResult?.name ?? '' })}</p>
+            ) : (
+              <>
+                <p>{t('accessLevelPeople.added', { count: peopleResult?.added ?? 0 })}</p>
+                {(peopleResult?.alreadyAssigned ?? 0) > 0 && (
+                  <p className="text-text-light">{t('accessLevelPeople.alreadyAssigned', { count: peopleResult?.alreadyAssigned ?? 0 })}</p>
+                )}
+              </>
+            )}
+          </div>
+          {peopleResult && peopleResult.warnings.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase tracking-widest text-error-text">{t('accessLevelPeople.syncWarnings')}</p>
+              <ul className="max-h-48 overflow-y-auto rounded-xl bg-error-bg p-3 space-y-1">
+                {peopleResult.warnings.map((w, i) => (
+                  <li key={i} className="text-xs text-error-text">{w}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-xs text-text-light">{t('accessLevelPeople.allSynced')}</p>
+          )}
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setPeopleResult(null)}>{t('common.ok')}</Button>
+          </div>
         </div>
       </Modal>
 
