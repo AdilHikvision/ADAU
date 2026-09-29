@@ -146,6 +146,15 @@ export function PeoplePicker({
         setGroupIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
     }
     const clearAll = () => { setPersonIds([]); setGroupIds([]) }
+    const allVisibleSelected = visiblePeople.length > 0 && visiblePeople.every((p) => personIds.includes(p.id))
+    /** «Выбрать всех» относится к видимому списку: вся группа целиком либо результат поиска. */
+    const toggleAllVisible = () => {
+        const visibleIds = visiblePeople.map((p) => p.id)
+        setMultiple(true)
+        setPersonIds((prev) => allVisibleSelected
+            ? prev.filter((id) => !visibleIds.includes(id))
+            : [...new Set([...prev, ...visibleIds])])
+    }
     const apply = (next?: PeoplePickerSelection) => {
         onApply(next ?? { personIds, groupIds })
         onClose()
@@ -242,13 +251,28 @@ export function PeoplePicker({
                     </div>
 
                     <div className="space-y-2">
-                        <input
-                            type="text"
-                            value={personSearch}
-                            onChange={(e) => setPersonSearch(e.target.value)}
-                            placeholder={t(text.personSearch)}
-                            className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
-                        />
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={personSearch}
+                                onChange={(e) => setPersonSearch(e.target.value)}
+                                placeholder={t(text.personSearch)}
+                                className="flex-1 min-w-0 rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                            />
+                            {/* Берёт всех, кто сейчас в списке: с учётом выбранной группы и поиска.
+                                Накопительный выбор включается сам — иначе отмечать было бы нечем. */}
+                            {visiblePeople.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={toggleAllVisible}
+                                    className={`shrink-0 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest transition-colors ${allVisibleSelected ? 'bg-primary text-white' : 'bg-background-light text-text-muted hover:text-text-dark'}`}
+                                >
+                                    {allVisibleSelected
+                                        ? t('peoplePicker.clearVisible')
+                                        : t('peoplePicker.selectAllVisible', { count: visiblePeople.length })}
+                                </button>
+                            )}
+                        </div>
                         <div className="h-80 overflow-y-auto rounded-xl border border-border-light p-1 space-y-0.5">
                             {allowEmpty && (
                                 <button

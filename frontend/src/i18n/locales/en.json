@@ -3324,6 +3324,8 @@
     }
   },
   "peoplePicker": {
+    "selectAllVisible": "Select all ({{count}})",
+    "clearVisible": "Clear all",
     "multiSelect": "Multiple",
     "singleHint": "Pick a person or tick groups. To pick several people turn on \"Multiple\".",
     "multiHint": "Tick people and groups — people from different groups can be combined.",

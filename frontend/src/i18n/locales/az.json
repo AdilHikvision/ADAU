@@ -3315,6 +3315,8 @@
     }
   },
   "peoplePicker": {
+    "selectAllVisible": "Hamısını seç ({{count}})",
+    "clearVisible": "Seçimi ləğv et",
     "multiSelect": "Bir neçə",
     "singleHint": "Bir nəfər seçin və ya qrupları işarələyin. Bir neçə nəfər üçün «Bir neçə» rejimini açın.",
     "multiHint": "İnsanları və qrupları qeyd qutuları ilə seçin — müxtəlif qruplardan da olar.",
