@@ -783,6 +783,12 @@ export function SystemSettingsPage() {
     interface RolePermissionsResponse { name: string; isSystem: boolean; isAdmin: boolean; permissions: string[] }
 
     const [permissionsCatalog, setPermissionsCatalog] = useState<PermissionGroup[]>([])
+    // Сервер отдаёт каталог прав по-английски: подписи ищем в локалях по ключу права
+    // (точки заменены на «_»), а если перевода ещё нет — показываем текст сервера.
+    const permKey = (key: string) => key.replace(/\./g, '_')
+    const permGroupLabel = (group: string) => t(`permissionGroups.${group.replace(/[^A-Za-z0-9]+/g, '_')}`, { defaultValue: group })
+    const permLabel = (p: PermissionDescriptor) => t(`permissionCatalog.${permKey(p.key)}.label`, { defaultValue: p.label })
+    const permDescription = (p: PermissionDescriptor) => t(`permissionCatalog.${permKey(p.key)}.description`, { defaultValue: p.description })
     const [permsModal, setPermsModal] = useState<{ name: string; isAdmin: boolean } | null>(null)
     const [permsSelection, setPermsSelection] = useState<Set<string>>(new Set())
     const [permsLoading, setPermsLoading] = useState(false)
@@ -2366,7 +2372,7 @@ export function SystemSettingsPage() {
                                 return (
                                     <div key={group.group} className="border border-border-light rounded-2xl p-4 space-y-2">
                                         <div className="flex items-center justify-between gap-2">
-                                            <p className="text-[11px] font-black uppercase tracking-widest text-text-dark">{group.group}</p>
+                                            <p className="text-[11px] font-black uppercase tracking-widest text-text-dark">{permGroupLabel(group.group)}</p>
                                             {!permsModal.isAdmin && (
                                                 <button
                                                     type="button"
@@ -2391,8 +2397,8 @@ export function SystemSettingsPage() {
                                                                 className="mt-0.5 w-4 h-4 rounded border-border-light text-primary focus:ring-primary/30 cursor-pointer disabled:cursor-default"
                                                             />
                                                             <div className="flex-1 min-w-0">
-                                                                <p className="text-sm font-bold text-text-dark">{p.label}</p>
-                                                                <p className="text-[11px] text-text-light leading-snug">{p.description}</p>
+                                                                <p className="text-sm font-bold text-text-dark">{permLabel(p)}</p>
+                                                                <p className="text-[11px] text-text-light leading-snug">{permDescription(p)}</p>
                                                                 <p className="text-[10px] font-mono text-text-muted">{p.key}</p>
                                                             </div>
                                                         </label>

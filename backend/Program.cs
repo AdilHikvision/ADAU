@@ -2964,7 +2964,7 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
     dbContext.Employees.Remove(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
     return syncWarnings.Count > 0 ? Results.Ok(new { syncWarnings }) : Results.NoContent();
-}).RequireAuthorization("Employees.Manage");
+}).RequireAuthorization("Employees.Delete");
 
 app.MapPost("/api/employees/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
 {

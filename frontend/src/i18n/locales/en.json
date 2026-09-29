@@ -1,4 +1,162 @@
 {
+  "permissionGroups": {
+    "Devices": "Devices",
+    "Access_control": "Access control",
+    "Organisation": "Organisation",
+    "People": "People",
+    "Attendance": "Attendance",
+    "Payroll": "Payroll",
+    "Reports": "Reports",
+    "Parking": "Parking",
+    "Housing": "University",
+    "System": "System"
+  },
+  "permissionCatalog": {
+    "Devices_View": {
+      "label": "View devices",
+      "description": "See device list, statuses, events, time settings."
+    },
+    "Devices_Manage": {
+      "label": "Manage devices",
+      "description": "Create / edit / delete devices, connect/disconnect, sync time, capture biometrics."
+    },
+    "Devices_ControlDoor": {
+      "label": "Control doors",
+      "description": "Open/close doors and elevator floors remotely."
+    },
+    "AccessLevels_View": {
+      "label": "View access levels",
+      "description": "See access level list and the doors they cover."
+    },
+    "AccessLevels_Manage": {
+      "label": "Manage access levels",
+      "description": "Create / edit / delete access levels and door bindings."
+    },
+    "Companies_View": {
+      "label": "View companies",
+      "description": "See company list."
+    },
+    "Companies_Manage": {
+      "label": "Manage companies",
+      "description": "Create / edit / delete companies."
+    },
+    "Departments_View": {
+      "label": "View departments",
+      "description": "See department tree."
+    },
+    "Departments_Manage": {
+      "label": "Manage departments",
+      "description": "Create / edit / delete departments."
+    },
+    "Employees_View": {
+      "label": "View employees",
+      "description": "See employee list and details."
+    },
+    "Employees_Manage": {
+      "label": "Add and edit employees",
+      "description": "Create and edit employees, push them to devices. Deleting requires a separate permission."
+    },
+    "Employees_Delete": {
+      "label": "Delete employees",
+      "description": "Delete employees together with their credentials and remove them from devices."
+    },
+    "Visitors_View": {
+      "label": "View visitors",
+      "description": "See visitor list."
+    },
+    "Visitors_Manage": {
+      "label": "Manage visitors",
+      "description": "Create / edit / delete visitors and push them to devices."
+    },
+    "Credentials_Manage": {
+      "label": "Manage credentials",
+      "description": "Cards, faces, fingerprints, irises — add/remove/sync."
+    },
+    "Schedules_View": {
+      "label": "View schedules",
+      "description": "See work schedules and the planner."
+    },
+    "Schedules_Manage": {
+      "label": "Manage schedules",
+      "description": "Create / edit / delete work schedules, assign to employees, edit planner."
+    },
+    "Attendance_View": {
+      "label": "View attendance",
+      "description": "See daily / period attendance and requests."
+    },
+    "Attendance_Manage": {
+      "label": "Manage attendance",
+      "description": "Approve/reject requests, edit corrections, manage log sync."
+    },
+    "Leaves_View": {
+      "label": "View leaves",
+      "description": "See leave list."
+    },
+    "Leaves_Manage": {
+      "label": "Manage leaves",
+      "description": "Create / approve / reject leaves."
+    },
+    "GeoZones_Manage": {
+      "label": "Manage geo-zones",
+      "description": "Create / edit / delete check-in geo-zones."
+    },
+    "Payroll_View": {
+      "label": "View payroll",
+      "description": "See periods, entries and salary configs."
+    },
+    "Payroll_Manage": {
+      "label": "Manage payroll",
+      "description": "Create / calculate / approve periods, edit salary and components, send reports."
+    },
+    "Reports_View": {
+      "label": "View reports",
+      "description": "Download attendance/payroll reports (Excel, PDF) and email them."
+    },
+    "Parking_View": {
+      "label": "View parking",
+      "description": "See zones, vehicles, permits, sessions, history and the event journal."
+    },
+    "Parking_Manage": {
+      "label": "Manage parking",
+      "description": "Edit zones and spaces, tariffs, subscriptions, permits, allow/block lists and the vehicle database."
+    },
+    "Parking_Operate": {
+      "label": "Operate parking",
+      "description": "Barrier decisions, manual entry, exit and taking payments at the POS."
+    },
+    "Housing_View": {
+      "label": "View students and structure",
+      "description": "See students and the university structure (faculties, buildings, floors)."
+    },
+    "Housing_Manage": {
+      "label": "Manage university structure",
+      "description": "Create / edit / delete university structure nodes and assign students to them."
+    },
+    "Users_Manage": {
+      "label": "Manage users",
+      "description": "Create / edit / delete system users, reset passwords."
+    },
+    "Roles_Manage": {
+      "label": "Manage roles",
+      "description": "Create / delete roles and assign permissions."
+    },
+    "Audit_View": {
+      "label": "View audit logs",
+      "description": "Read the system audit log."
+    },
+    "Settings_Manage": {
+      "label": "Manage settings",
+      "description": "Edit system settings, SMTP, email templates, time/log-sync schedules."
+    },
+    "System_Manage": {
+      "label": "System control",
+      "description": "Start/stop services, run health checks."
+    },
+    "Backups_Manage": {
+      "label": "Manage backups",
+      "description": "Create / download / delete database backups."
+    }
+  },
   "common": {
     "appName": "Attendance",
     "appSubtitle": "Security Platform",

@@ -125,7 +125,7 @@ export function PersonDetailPage() {
   // Переключать работника в жильца можно только в модуле ЖКХ.
   const isHousingModule = activeModule === 'housing'
   const navigate = useNavigate()
-  const { token } = useAuth()
+  const { token, hasPermission } = useAuth()
 
   const [detail, setDetail] = useState<PersonDetail | null>(null)
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
@@ -171,6 +171,8 @@ export function PersonDetailPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
 
   const apiPath = type === 'employee' ? '/api/employees' : '/api/visitors'
+  // Удаление работника выделено в отдельное право; у гостя оно осталось внутри Visitors.Manage.
+  const canDeleteProfile = hasPermission(type === 'employee' ? 'Employees.Delete' : 'Visitors.Manage')
 
   const loadDetail = useCallback(async () => {
     if (!token || !id) return
@@ -948,7 +950,9 @@ export function PersonDetailPage() {
               {/* Действия */}
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="min-w-0">
-                  <Button variant="danger" icon="delete" onClick={() => setDeleteConfirmOpen(true)}>{t('personDetail.deleteProfile')}</Button>
+                  {canDeleteProfile && (
+                    <Button variant="danger" icon="delete" onClick={() => setDeleteConfirmOpen(true)}>{t('personDetail.deleteProfile')}</Button>
+                  )}
                   <p className="text-[10px] text-text-light mt-1.5 leading-relaxed">{t('personDetail.deleteProfileHint')}</p>
                 </div>
                 <Button icon="save" onClick={handleSave} isLoading={saveLoading}>{t('common.save')}</Button>

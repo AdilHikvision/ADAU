@@ -441,6 +441,40 @@ public sealed class DatabaseInitializer(
         }
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        // Удаление работника выделено из Employees.Manage в отдельное Employees.Delete.
+        // Роли, которые умели удалять до обновления, получают новое право один раз —
+        // иначе обновление молча отняло бы у них то, что уже было. Флаг в system_settings
+        // защищает от повторной выдачи: если админ снимет удаление, оно не вернётся.
+        const string employeesDeleteSplitFlag = "Migrations.EmployeesDeleteSplit";
+        if (!await dbContext.SystemSettings.AnyAsync(s => s.Key == employeesDeleteSplitFlag, cancellationToken))
+        {
+            var rows = await dbContext.RolePermissions
+                .Where(r => r.Permission == Permissions.EmployeesManage || r.Permission == Permissions.EmployeesDelete)
+                .ToListAsync(cancellationToken);
+            var canDelete = rows
+                .Where(r => r.Permission == Permissions.EmployeesDelete)
+                .Select(r => r.RoleName)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var roleName in rows
+                .Where(r => r.Permission == Permissions.EmployeesManage)
+                .Select(r => r.RoleName)
+                .Where(name => !canDelete.Contains(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                dbContext.RolePermissions.Add(new Backend.Domain.Entities.RolePermission
+                {
+                    RoleName = roleName,
+                    Permission = Permissions.EmployeesDelete
+                });
+            }
+            dbContext.SystemSettings.Add(new Backend.Domain.Entities.SystemSetting
+            {
+                Key = employeesDeleteSplitFlag,
+                Value = "1"
+            });
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         // Davamiyyət kriteriyaları: дефолтные строки только если таблица пуста —
         // дальше они правятся через Settings → Davamiyyət kriteriyaları и не перетираются.
         if (!await dbContext.AttendanceCriterias.AnyAsync(cancellationToken))

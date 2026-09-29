@@ -1,4 +1,162 @@
 {
+  "permissionGroups": {
+    "Devices": "Qurğular",
+    "Access_control": "Giriş nəzarəti",
+    "Organisation": "Təşkilat",
+    "People": "İnsanlar",
+    "Attendance": "Davamiyyət",
+    "Payroll": "Əmək haqqı",
+    "Reports": "Hesabatlar",
+    "Parking": "Parkinq",
+    "Housing": "Universitet",
+    "System": "Sistem"
+  },
+  "permissionCatalog": {
+    "Devices_View": {
+      "label": "Qurğulara baxış",
+      "description": "Qurğuların siyahısı, statuslar, hadisələr, vaxt parametrləri."
+    },
+    "Devices_Manage": {
+      "label": "Qurğuların idarəsi",
+      "description": "Qurğuların yaradılması, dəyişdirilməsi və silinməsi, qoşulma, vaxt sinxronizasiyası, biometriyanın oxunması."
+    },
+    "Devices_ControlDoor": {
+      "label": "Qapıların idarəsi",
+      "description": "Qapıların və lift mərtəbələrinin məsafədən açılıb-bağlanması."
+    },
+    "AccessLevels_View": {
+      "label": "Giriş səviyyələrinə baxış",
+      "description": "Giriş səviyyələrinin siyahısı və onlara daxil olan qapılar."
+    },
+    "AccessLevels_Manage": {
+      "label": "Giriş səviyyələrinin idarəsi",
+      "description": "Giriş səviyyələrinin və qapı bağlantılarının yaradılması, dəyişdirilməsi, silinməsi."
+    },
+    "Companies_View": {
+      "label": "Şirkətlərə baxış",
+      "description": "Şirkətlərin siyahısı."
+    },
+    "Companies_Manage": {
+      "label": "Şirkətlərin idarəsi",
+      "description": "Şirkətlərin yaradılması, dəyişdirilməsi, silinməsi."
+    },
+    "Departments_View": {
+      "label": "Şöbələrə baxış",
+      "description": "Şöbələr ağacı."
+    },
+    "Departments_Manage": {
+      "label": "Şöbələrin idarəsi",
+      "description": "Şöbələrin yaradılması, dəyişdirilməsi, silinməsi."
+    },
+    "Employees_View": {
+      "label": "İşçilərə baxış",
+      "description": "İşçilərin siyahısı və kartları."
+    },
+    "Employees_Manage": {
+      "label": "İşçilərin əlavəsi və redaktəsi",
+      "description": "İşçilərin yaradılması və dəyişdirilməsi, qurğulara yazılması. Silmə ayrı icazədir."
+    },
+    "Employees_Delete": {
+      "label": "İşçilərin silinməsi",
+      "description": "İşçilərin kimlik məlumatları ilə birlikdə silinməsi və qurğulardan çıxarılması."
+    },
+    "Visitors_View": {
+      "label": "Qonaqlara baxış",
+      "description": "Qonaqların siyahısı."
+    },
+    "Visitors_Manage": {
+      "label": "Qonaqların idarəsi",
+      "description": "Qonaqların yaradılması, dəyişdirilməsi və silinməsi, qurğulara yazılması."
+    },
+    "Credentials_Manage": {
+      "label": "Kimlik məlumatlarının idarəsi",
+      "description": "Kartlar, üzlər, barmaq izləri, bəbək — əlavə, silmə, sinxronizasiya."
+    },
+    "Schedules_View": {
+      "label": "Cədvəllərə baxış",
+      "description": "İş cədvəlləri və planlayıcı."
+    },
+    "Schedules_Manage": {
+      "label": "Cədvəllərin idarəsi",
+      "description": "Cədvəllərin yaradılması, dəyişdirilməsi, silinməsi, işçilərə təyini, planlayıcının redaktəsi."
+    },
+    "Attendance_View": {
+      "label": "Davamiyyətə baxış",
+      "description": "Günlük və dövri davamiyyət hesabatları, müraciətlər."
+    },
+    "Attendance_Manage": {
+      "label": "Davamiyyətin idarəsi",
+      "description": "Müraciətlərin təsdiqi və rəddi, düzəlişlərin redaktəsi, jurnal sinxronizasiyasının idarəsi."
+    },
+    "Leaves_View": {
+      "label": "Məzuniyyətlərə baxış",
+      "description": "Məzuniyyətlərin siyahısı."
+    },
+    "Leaves_Manage": {
+      "label": "Məzuniyyətlərin idarəsi",
+      "description": "Məzuniyyətlərin yaradılması, təsdiqi və rəddi."
+    },
+    "GeoZones_Manage": {
+      "label": "Geo-zonaların idarəsi",
+      "description": "Qeydiyyat geo-zonalarının yaradılması, dəyişdirilməsi, silinməsi."
+    },
+    "Payroll_View": {
+      "label": "Əmək haqqına baxış",
+      "description": "Dövrlər, hesablamalar və əmək haqqı parametrləri."
+    },
+    "Payroll_Manage": {
+      "label": "Əmək haqqının idarəsi",
+      "description": "Dövrlərin yaradılması, hesablanması və təsdiqi, əmək haqqı və komponentlərin redaktəsi, hesabatların göndərilməsi."
+    },
+    "Reports_View": {
+      "label": "Hesabatlara baxış",
+      "description": "Davamiyyət və əmək haqqı hesabatlarının yüklənməsi (Excel, PDF) və e-poçtla göndərilməsi."
+    },
+    "Parking_View": {
+      "label": "Parkinqə baxış",
+      "description": "Zonalar, nəqliyyat, buraxılışlar, sessiyalar, tarixçə və hadisə jurnalı."
+    },
+    "Parking_Manage": {
+      "label": "Parkinqin idarəsi",
+      "description": "Zona və yerlərin, tariflərin, abonementlərin, buraxılışların, ağ və qara siyahıların, nəqliyyat bazasının redaktəsi."
+    },
+    "Parking_Operate": {
+      "label": "Parkinqdə iş",
+      "description": "Baryer qərarları, əl ilə giriş və çıxış, kassada ödənişin qəbulu."
+    },
+    "Housing_View": {
+      "label": "Tələbələrə və struktura baxış",
+      "description": "Tələbələr və universitetin strukturu (fakültələr, korpuslar, mərtəbələr)."
+    },
+    "Housing_Manage": {
+      "label": "Universitet strukturunun idarəsi",
+      "description": "Universitet strukturunun qovşaqlarının yaradılması, dəyişdirilməsi, silinməsi və tələbələrin yerləşdirilməsi."
+    },
+    "Users_Manage": {
+      "label": "İstifadəçilərin idarəsi",
+      "description": "Sistem istifadəçilərinin yaradılması, dəyişdirilməsi, silinməsi, şifrələrin sıfırlanması."
+    },
+    "Roles_Manage": {
+      "label": "Rolların idarəsi",
+      "description": "Rolların yaradılması və silinməsi, icazələrin verilməsi."
+    },
+    "Audit_View": {
+      "label": "Audit jurnalına baxış",
+      "description": "Sistem audit jurnalının oxunması."
+    },
+    "Settings_Manage": {
+      "label": "Parametrlərin idarəsi",
+      "description": "Sistem parametrləri, SMTP, məktub şablonları, vaxt və jurnal sinxronizasiya cədvəllərinin redaktəsi."
+    },
+    "System_Manage": {
+      "label": "Sistemin idarəsi",
+      "description": "Xidmətlərin başladılması və dayandırılması, vəziyyət yoxlamaları."
+    },
+    "Backups_Manage": {
+      "label": "Ehtiyat nüsxələrin idarəsi",
+      "description": "Baza ehtiyat nüsxələrinin yaradılması, endirilməsi və silinməsi."
+    }
+  },
   "common": {
     "appName": "Attendance",
     "appSubtitle": "Təhlükəsizlik platforması",

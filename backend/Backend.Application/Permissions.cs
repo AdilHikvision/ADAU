@@ -24,7 +24,9 @@ public static class Permissions
 
     // People
     public const string EmployeesView = "Employees.View";
+    /// <summary>Добавление и изменение работников. Удаление выделено в Employees.Delete.</summary>
     public const string EmployeesManage = "Employees.Manage";
+    public const string EmployeesDelete = "Employees.Delete";
     public const string VisitorsView = "Visitors.View";
     public const string VisitorsManage = "Visitors.Manage";
     public const string CredentialsManage = "Credentials.Manage";
@@ -82,7 +84,8 @@ public static class Permissions
         new(DepartmentsManage, "Organisation", "Manage departments", "Create / edit / delete departments."),
 
         new(EmployeesView, "People", "View employees", "See employee list and details."),
-        new(EmployeesManage, "People", "Manage employees", "Create / edit / delete employees and push them to devices."),
+        new(EmployeesManage, "People", "Add and edit employees", "Create and edit employees, push them to devices. Deleting requires a separate permission."),
+        new(EmployeesDelete, "People", "Delete employees", "Delete employees together with their credentials and remove them from devices."),
         new(VisitorsView, "People", "View visitors", "See visitor list."),
         new(VisitorsManage, "People", "Manage visitors", "Create / edit / delete visitors and push them to devices."),
         new(CredentialsManage, "People", "Manage credentials", "Cards, faces, fingerprints, irises — add/remove/sync."),
@@ -143,7 +146,7 @@ public static class Permissions
             [
                 CompaniesView, CompaniesManage,
                 DepartmentsView, DepartmentsManage,
-                EmployeesView, EmployeesManage,
+                EmployeesView, EmployeesManage, EmployeesDelete,
                 VisitorsView,
                 SchedulesView, SchedulesManage,
                 AttendanceView, AttendanceManage,
