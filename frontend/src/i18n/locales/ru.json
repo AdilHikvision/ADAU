@@ -3355,6 +3355,8 @@
     "clear": "Очистить"
   },
   "accessLevelPeople": {
+    "structureHousing": "Структура университета",
+    "structureCompany": "Структура компании",
     "title": "Люди на уровне «{{name}}»",
     "open": "Люди",
     "edit": "Изменить",

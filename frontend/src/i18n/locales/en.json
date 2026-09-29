@@ -3338,6 +3338,8 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "structureHousing": "University structure",
+    "structureCompany": "Company structure",
     "title": "People on \"{{name}}\"",
     "open": "People",
     "edit": "Edit",

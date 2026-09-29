@@ -184,6 +184,14 @@ export function AccessLevelsPage() {
   const peopleCountOf = (item: AccessLevel) =>
     (item.employeeCount ?? 0) + (withResidents ? item.residentCount ?? 0 : 0)
 
+  // В окно выбора отдаём только тех, кого на уровне ещё нет: добавлять повторно некуда,
+  // а в длинном списке уже назначенные только мешают искать.
+  const assignedPersonIds = useMemo(() => new Set(levelPeople.map((p) => p.id)), [levelPeople])
+  const assignableDirectory = useMemo(
+    () => directory.filter((p) => !assignedPersonIds.has(p.id)),
+    [directory, assignedPersonIds],
+  )
+
   const loadLevelPeople = useCallback(async (levelId: string) => {
     if (!token) return
     setPeopleLoading(true)
@@ -847,8 +855,14 @@ export function AccessLevelsPage() {
       <PeoplePicker
         onClose={() => setPeoplePickerOpen(false)}
         title={t('accessLevelPeople.addTitle')}
-        groups={withResidents ? [...departments, ...blocks] : departments}
-        people={directory.map((p): PickerPerson => ({
+        /* У жильцов и студентов своя структура, у работников — отделы: показываем их
+           отдельными разделами, иначе два дерева сливаются в один список. */
+        groups={withResidents ? undefined : departments}
+        sections={withResidents ? [
+          { label: t('accessLevelPeople.structureHousing'), groups: blocks },
+          { label: t('accessLevelPeople.structureCompany'), groups: departments },
+        ] : undefined}
+        people={assignableDirectory.map((p): PickerPerson => ({
           id: p.id,
           firstName: p.firstName,
           lastName: p.lastName,
@@ -859,7 +873,7 @@ export function AccessLevelsPage() {
         selection={{ personIds: [], groupIds: [] }}
         allowEmpty={false}
         onApply={({ personIds, groupIds }) => {
-          const fromGroups = groupIds.length === 0 ? [] : directory
+          const fromGroups = groupIds.length === 0 ? [] : assignableDirectory
             .filter((p) => {
               const g = p.department?.id ?? p.housingBlockId ?? null
               return g != null && groupIds.includes(g)

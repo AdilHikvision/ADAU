@@ -3329,6 +3329,8 @@
     "clear": "Təmizlə"
   },
   "accessLevelPeople": {
+    "structureHousing": "Universitet strukturu",
+    "structureCompany": "Şirkət strukturu",
     "title": "«{{name}}» səviyyəsindəki insanlar",
     "open": "İnsanlar",
     "edit": "Redaktə et",

@@ -27,10 +27,21 @@ export interface PeoplePickerSelection {
     groupIds: string[]
 }
 
+/**
+ * Раздел дерева групп: нужен там, где групп два разных вида — например структура
+ * университета и структура компании. Без разделов дерево рисуется одним списком.
+ */
+export interface PickerGroupSection {
+    label: string
+    groups: PickerGroup[]
+}
+
 interface PeoplePickerProps {
     onClose: () => void
     title: string
-    groups: PickerGroup[]
+    groups?: PickerGroup[]
+    /** Группы по разделам. Задан — дерево слева делится на подписанные части. */
+    sections?: PickerGroupSection[]
     people: PickerPerson[]
     /** Начальный выбор — окно правит свою копию и отдаёт её по «Применить». */
     selection: PeoplePickerSelection
@@ -77,7 +88,8 @@ const DEFAULT_TEXT = {
 export function PeoplePicker({
     onClose,
     title,
-    groups,
+    groups = [],
+    sections,
     people,
     selection,
     onApply,
@@ -97,13 +109,20 @@ export function PeoplePicker({
     const [groupSearch, setGroupSearch] = useState('')
     const [personSearch, setPersonSearch] = useState('')
 
+    // Разделы: без них — один безымянный раздел со всеми группами. Поиск, обход дерева
+    // и выбор работают по объединению разделов, чтобы правая колонка не зависела от них.
+    const groupSections: PickerGroupSection[] = sections?.filter((s) => s.groups.length > 0).length
+        ? sections.filter((s) => s.groups.length > 0)
+        : [{ label: '', groups }]
+    const allGroups = groupSections.flatMap((s) => s.groups)
+
     /** Группа и все вложенные: выбрав корневую, видим людей из подгрупп. */
     const descendants = (rootId: string): Set<string> => {
         const set = new Set<string>([rootId])
         let grew = true
         while (grew) {
             grew = false
-            for (const g of groups) {
+            for (const g of allGroups) {
                 if (g.parentId && set.has(g.parentId) && !set.has(g.id)) { set.add(g.id); grew = true }
             }
         }
@@ -161,11 +180,11 @@ export function PeoplePicker({
             </div>
         )
     }
-    const renderGroups = (parentId: string | null, depth: number): ReactNode[] =>
-        groups
+    const renderGroups = (list: PickerGroup[], parentId: string | null, depth: number): ReactNode[] =>
+        list
             .filter((g) => (g.parentId ?? null) === parentId)
             .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
-            .flatMap((g) => [groupRow(g, depth), ...renderGroups(g.id, depth + 1)])
+            .flatMap((g) => [groupRow(g, depth), ...renderGroups(list, g.id, depth + 1)])
 
     const selectedCount = personIds.length + groupIds.length
 
@@ -205,11 +224,20 @@ export function PeoplePicker({
                                 {t(text.allGroups)}
                             </button>
                             {groupQuery
-                                ? groups
+                                ? allGroups
                                     .filter((g) => g.name.toLowerCase().includes(groupQuery))
                                     .sort((a, b) => a.name.localeCompare(b.name))
                                     .map((g) => groupRow(g, 0))
-                                : renderGroups(null, 0)}
+                                : groupSections.map((section) => (
+                                    <div key={section.label} className="space-y-0.5">
+                                        {section.label && groupSections.length > 1 && (
+                                            <p className="px-3 pt-2 pb-1 text-[10px] font-black uppercase tracking-widest text-text-light">
+                                                {section.label}
+                                            </p>
+                                        )}
+                                        {renderGroups(section.groups, null, 0)}
+                                    </div>
+                                ))}
                         </div>
                     </div>
 
