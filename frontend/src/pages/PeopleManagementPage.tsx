@@ -9,6 +9,7 @@ import { useLoading } from '../context/LoadingContext'
 import { apiRequest } from '../lib/api'
 import { FaceThumbnail } from '../components/FaceThumbnail'
 import { useModule } from '../context/ModuleContext'
+import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
 
 interface EmployeeResponse {
   id: string
@@ -119,6 +120,9 @@ export function PeopleManagementPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkResult, setBulkResult] = useState<{ deleted: number; warnings: string[] } | null>(null)
   const [deptFilter, setDeptFilter] = useState<string>('')
+  // У студента отдела нет: его группа — факультет из структуры университета.
+  const [blocks, setBlocks] = useState<HousingBlockItem[]>([])
+  const [blockFilter, setBlockFilter] = useState<string>('')
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 20
   const [error, setError] = useState<string | null>(null)
@@ -199,6 +203,12 @@ export function PeopleManagementPage() {
       .catch(() => setCompanyName(null))
   }, [token])
 
+  /** Структура университета нужна только вкладке студентов. */
+  const loadBlocks = useCallback(async () => {
+    if (!token || !isHousing) { setBlocks([]); return }
+    setBlocks(await loadHousingBlocks(token).catch(() => []))
+  }, [token, isHousing])
+
   const loadDepartments = useCallback(async (cId?: string | null) => {
     if (!token) return
 
@@ -234,7 +244,8 @@ export function PeopleManagementPage() {
   useEffect(() => {
     loadCompanyMode()
     loadDepartments()
-  }, [loadCompanyMode, loadDepartments])
+    void loadBlocks()
+  }, [loadCompanyMode, loadDepartments, loadBlocks])
 
   useEffect(() => {
     if (!token) return
@@ -380,7 +391,7 @@ export function PeopleManagementPage() {
     }
   }
 
-  useEffect(() => { setCurrentPage(1) }, [tab, searchQuery, deptFilter, statusFilterEmployees, statusFilterVisitors])
+  useEffect(() => { setCurrentPage(1) }, [tab, searchQuery, deptFilter, blockFilter, statusFilterEmployees, statusFilterVisitors])
 
 
   const filteredList = useMemo(() => {
@@ -405,8 +416,20 @@ export function PeopleManagementPage() {
     if (deptFilter) {
       result = result.filter(item => item.department?.id === deptFilter)
     }
+    if (tab === 'residents' && blockFilter) {
+      // Выбран факультет — показываем и студентов его подразделений.
+      const scope = new Set<string>([blockFilter])
+      let grew = true
+      while (grew) {
+        grew = false
+        for (const b of blocks) {
+          if (b.parentId && scope.has(b.parentId) && !scope.has(b.id)) { scope.add(b.id); grew = true }
+        }
+      }
+      result = result.filter((item) => 'housingBlockId' in item && item.housingBlockId != null && scope.has(item.housingBlockId))
+    }
     return result
-  }, [tab, employees, residents, visitors, statusFilterEmployees, statusFilterVisitors, deptFilter])
+  }, [tab, employees, residents, visitors, statusFilterEmployees, statusFilterVisitors, deptFilter, blockFilter, blocks])
 
   const totalPages = Math.max(1, Math.ceil(filteredList.length / PAGE_SIZE))
 
@@ -506,7 +529,24 @@ export function PeopleManagementPage() {
             )}
           </div>
 
-          {/* Department filter — у жильца отдела нет, фильтр обнулил бы список. */}
+          {/* У студента отдела нет — на его вкладке выбираем факультет. */}
+          {tab === 'residents' && blocks.length > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-text-light uppercase tracking-widest shrink-0">{t('people.block')}</span>
+              <select
+                value={blockFilter}
+                onChange={e => setBlockFilter(e.target.value)}
+                className="text-xs font-bold text-text-dark bg-surface border border-border-light rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-sm min-w-[160px]"
+              >
+                <option value="">{t('people.allBlocks')}</option>
+                {flattenHousingBlocks(blocks).map(b => (
+                  <option key={b.id} value={b.id}>{b.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Department filter — у студента отдела нет, фильтр обнулил бы список. */}
           {tab !== 'residents' && departments.length > 0 && (
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-black text-text-light uppercase tracking-widest shrink-0">{t('people.departmentLabel')}</span>

@@ -1676,6 +1676,7 @@
     }
   },
   "people": {
+    "allBlocks": "Bütün fakültələr",
     "bulk": {
       "selectPage": "Səhifəni seç",
       "selected": "Seçilib: {{count}}",

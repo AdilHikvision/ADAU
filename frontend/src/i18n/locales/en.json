@@ -1676,6 +1676,7 @@
     }
   },
   "people": {
+    "allBlocks": "All faculties",
     "bulk": {
       "selectPage": "Select page",
       "selected": "Selected: {{count}}",

@@ -1687,6 +1687,7 @@
     }
   },
   "people": {
+    "allBlocks": "Все факультеты",
     "bulk": {
       "selectPage": "Выбрать страницу",
       "selected": "Выбрано: {{count}}",
