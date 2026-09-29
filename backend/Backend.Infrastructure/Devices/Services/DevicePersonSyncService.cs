@@ -690,17 +690,72 @@ public sealed class DevicePersonSyncService(
         return outcomes.OrderBy(o => o.DeviceName, StringComparer.CurrentCulture).ToList();
     }
 
+    /// <summary>
+    /// Снимает сразу нескольких людей со всех устройств. Связь с устройством проверяется
+    /// один раз, а не на каждого человека, поэтому массовое удаление не умножает таймауты
+    /// недоступных устройств на количество профилей.
+    /// </summary>
+    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromAllDevicesAsync(IReadOnlyCollection<string> employeeNos, CancellationToken cancellationToken = default)
+    {
+        if (employeeNos.Count == 0) return [];
+
+        var devices = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
+        var outcomes = new ConcurrentBag<DevicePersonDeleteOutcome>();
+
+        await Parallel.ForEachAsync(
+            devices,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+            async (device, token) =>
+            {
+                var alive = await IsDeviceAnsweringAsync(device, token);
+                if (!alive.Answering)
+                {
+                    // Одно предупреждение на устройство: перечислять всех людей незачем,
+                    // до устройства не дошёл никто.
+                    outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name,
+                        new DeviceSyncResult(false, alive.Error ?? "Устройство недоступно.")));
+                    return;
+                }
+
+                var client = CreateClient(device);
+                foreach (var employeeNo in employeeNos)
+                {
+                    var result = await DeletePersonLadderAsync(employeeNo, client, token);
+                    if (!result.Success)
+                        outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name, result, employeeNo));
+                }
+            });
+
+        return outcomes
+            .OrderBy(o => o.DeviceName, StringComparer.CurrentCulture)
+            .ThenBy(o => o.EmployeeNo, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
     private async Task<DeviceSyncResult> DeletePersonFromDeviceCoreAsync(string employeeNo, Device device, CancellationToken cancellationToken)
     {
-        // Короткая проверка связи перед лестницей форматов: варианты тела нужны только
-        // устройству, которое отвечает и не понимает формат. Если оно молчит, каждая
-        // следующая попытка упрётся в тот же таймаут, поэтому выходим сразу.
-        var probe = CreateClient(device, TimeSpan.FromSeconds(4));
-        var (alive, _, probeError) = await probe.GetAsync("ISAPI/System/deviceInfo?format=json", cancellationToken);
-        if (!alive)
-            return new DeviceSyncResult(false, probeError ?? "Устройство недоступно.");
+        var alive = await IsDeviceAnsweringAsync(device, cancellationToken);
+        if (!alive.Answering)
+            return new DeviceSyncResult(false, alive.Error ?? "Устройство недоступно.");
 
-        var client = CreateClient(device);
+        return await DeletePersonLadderAsync(employeeNo, CreateClient(device), cancellationToken);
+    }
+
+    /// <summary>
+    /// Короткая проверка связи перед лестницей форматов удаления: варианты тела нужны только
+    /// устройству, которое отвечает и не понимает формат. Если оно молчит, каждая из тринадцати
+    /// попыток упрётся в тот же таймаут, поэтому выходим сразу.
+    /// </summary>
+    private async Task<(bool Answering, string? Error)> IsDeviceAnsweringAsync(Device device, CancellationToken cancellationToken)
+    {
+        var probe = CreateClient(device, TimeSpan.FromSeconds(4));
+        var (ok, _, error) = await probe.GetAsync("ISAPI/System/deviceInfo?format=json", cancellationToken);
+        return (ok, error);
+    }
+
+    /// <summary>Перебор форматов запроса удаления: прошивки Hikvision ждут разные тела.</summary>
+    private static async Task<DeviceSyncResult> DeletePersonLadderAsync(string employeeNo, IsapiClient client, CancellationToken cancellationToken)
+    {
         var escapedNo = Uri.EscapeDataString(employeeNo);
 
         // DS-K1T670, DS-K1T341 и др. ожидают "mode": "byEmployeeNo" и массив объектов в "EmployeeNoList"

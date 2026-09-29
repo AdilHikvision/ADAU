@@ -178,10 +178,13 @@ public interface IDevicePersonSyncService
     /// <summary>Снимает пользователя со всех устройств сразу: запросы идут параллельно,
     /// а недоступные устройства отсекаются короткой проверкой (см. реализацию).</summary>
     Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePersonFromAllDevicesAsync(string employeeNo, CancellationToken cancellationToken = default);
+    /// <summary>Снимает сразу нескольких людей со всех устройств: связь с устройством
+    /// проверяется один раз, а не на каждого человека.</summary>
+    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromAllDevicesAsync(IReadOnlyCollection<string> employeeNos, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Итог удаления человека с одного устройства — имя нужно для предупреждения в UI.</summary>
-public sealed record DevicePersonDeleteOutcome(Guid DeviceId, string DeviceName, DeviceSyncResult Result);
+public sealed record DevicePersonDeleteOutcome(Guid DeviceId, string DeviceName, DeviceSyncResult Result, string? EmployeeNo = null);
 
 /// <summary>Результат захвата лица с устройства.
 /// MessageCode — ключ для локализации на клиенте; Message остаётся человекочитаемым запасным

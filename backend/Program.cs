@@ -2963,6 +2963,52 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
     return syncWarnings.Count > 0 ? Results.Ok(new { syncWarnings }) : Results.NoContent();
 }).RequireAuthorization("Employees.Delete");
 
+// Массовое удаление профилей: людей снимаем с устройств одной пачкой, поэтому связь
+// с каждым устройством проверяется один раз, а не на каждого выбранного человека.
+app.MapPost("/api/employees/bulk-delete", async (BulkDeletePeopleRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    var ids = (request.PersonIds ?? []).Distinct().ToList();
+    if (ids.Count == 0)
+        return Results.BadRequest(new { message = "Не выбран ни один профиль." });
+
+    var people = await dbContext.Employees
+        .Include(e => e.AccessLevels)
+        .Include(e => e.Faces)
+        .Where(e => ids.Contains(e.Id))
+        .ToListAsync(cancellationToken);
+    if (people.Count == 0)
+        return Results.NotFound();
+
+    var employeeNos = people
+        .Select(p => TruncateEmployeeNo(!string.IsNullOrWhiteSpace(p.EmployeeNo) ? p.EmployeeNo!.Trim() : p.Id.ToString("N")[..32]))
+        .Distinct()
+        .ToList();
+
+    var syncWarnings = new List<string>();
+    foreach (var outcome in await syncService.DeletePeopleFromAllDevicesAsync(employeeNos, cancellationToken))
+    {
+        if (outcome.Result.Success) continue;
+        syncWarnings.Add(outcome.EmployeeNo is null
+            ? $"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}"
+            : $"Устройство \"{outcome.DeviceName}\", {outcome.EmployeeNo}: {outcome.Result.Message}");
+        logger.LogWarning("Bulk delete employee {EmployeeNo} from device {DeviceId}: {Error}",
+            outcome.EmployeeNo ?? "-", outcome.DeviceId, outcome.Result.Message);
+    }
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    foreach (var face in people.SelectMany(p => p.Faces))
+    {
+        var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+        if (File.Exists(fullPath)) File.Delete(fullPath);
+    }
+
+    dbContext.EmployeeAccessLevels.RemoveRange(people.SelectMany(p => p.AccessLevels));
+    dbContext.Employees.RemoveRange(people);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    return Results.Ok(new { deleted = people.Count, missing = ids.Count - people.Count, syncWarnings });
+}).RequireAuthorization("Employees.Delete");
+
 app.MapPost("/api/employees/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
 {
     var results = new List<object>();
@@ -3294,6 +3340,51 @@ app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext,
     dbContext.Visitors.Remove(entity);
     await dbContext.SaveChangesAsync(cancellationToken);
     return syncWarnings.Count > 0 ? Results.Ok(new { syncWarnings }) : Results.NoContent();
+}).RequireAuthorization("Visitors.Manage");
+
+// Массовое удаление гостей — как у работников, одной пачкой по устройствам.
+app.MapPost("/api/visitors/bulk-delete", async (BulkDeletePeopleRequest request, AppDbContext dbContext, IDevicePersonSyncService syncService, IConfiguration configuration, ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    var ids = (request.PersonIds ?? []).Distinct().ToList();
+    if (ids.Count == 0)
+        return Results.BadRequest(new { message = "Не выбран ни один профиль." });
+
+    var people = await dbContext.Visitors
+        .Include(v => v.AccessLevels)
+        .Include(v => v.Faces)
+        .Where(v => ids.Contains(v.Id))
+        .ToListAsync(cancellationToken);
+    if (people.Count == 0)
+        return Results.NotFound();
+
+    var employeeNos = people
+        .Select(v => !string.IsNullOrWhiteSpace(v.DocumentNumber) ? v.DocumentNumber.Trim() : v.Id.ToString("N")[..32])
+        .Distinct()
+        .ToList();
+
+    var syncWarnings = new List<string>();
+    foreach (var outcome in await syncService.DeletePeopleFromAllDevicesAsync(employeeNos, cancellationToken))
+    {
+        if (outcome.Result.Success) continue;
+        syncWarnings.Add(outcome.EmployeeNo is null
+            ? $"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}"
+            : $"Устройство \"{outcome.DeviceName}\", {outcome.EmployeeNo}: {outcome.Result.Message}");
+        logger.LogWarning("Bulk delete visitor {EmployeeNo} from device {DeviceId}: {Error}",
+            outcome.EmployeeNo ?? "-", outcome.DeviceId, outcome.Result.Message);
+    }
+
+    var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
+    foreach (var face in people.SelectMany(v => v.Faces))
+    {
+        var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
+        if (File.Exists(fullPath)) File.Delete(fullPath);
+    }
+
+    dbContext.VisitorAccessLevels.RemoveRange(people.SelectMany(v => v.AccessLevels));
+    dbContext.Visitors.RemoveRange(people);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    return Results.Ok(new { deleted = people.Count, missing = ids.Count - people.Count, syncWarnings });
 }).RequireAuthorization("Visitors.Manage");
 
 app.MapPost("/api/visitors/{id:guid}/sync", async (Guid id, SyncToDevicesRequest request, IDevicePersonSyncService syncService, CancellationToken cancellationToken) =>
@@ -11620,6 +11711,8 @@ public sealed record UpdateEmployeeRequest(string FirstName, string LastName, st
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
+/// <summary>Массовое удаление профилей: список выбранных в списке людей.</summary>
+public sealed record BulkDeletePeopleRequest(Guid[]? PersonIds);
 
 public sealed record CaptureFaceRequest(string? PersonId, string? PersonType);
 public sealed record CaptureFingerprintRequest(string? PersonId, string? PersonType, int FingerIndex);

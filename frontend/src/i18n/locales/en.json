@@ -1676,6 +1676,22 @@
     }
   },
   "people": {
+    "bulk": {
+      "selectPage": "Select page",
+      "selected": "Selected: {{count}}",
+      "selectOne": "Select {{name}}",
+      "clear": "Clear selection",
+      "delete": "Delete selected",
+      "confirmTitle": "Delete profiles",
+      "confirmBody": "Delete the selected profiles ({{count}})? The people will be removed from the devices together with their cards, faces and fingerprints. This cannot be undone.",
+      "deletingTitle": "Deleting profiles",
+      "deletingBody": "Profiles are being deleted and removed from the devices. Keep this window open.",
+      "doneTitle": "Done",
+      "deleted": "Profiles deleted: {{count}}",
+      "syncWarnings": "Device sync warnings:",
+      "allSynced": "All devices are up to date.",
+      "failed": "Failed to delete the selected profiles"
+    },
     "title": "People Management",
     "description": "Manage your workforce, visitors, and their security credentials.",
     "addPeople": "Add People",

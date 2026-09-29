@@ -86,6 +86,7 @@ export function PeopleManagementPage() {
   const canImportFromDevices = hasPermission('Devices.View')
   const canManageEmployees = hasPermission('Employees.Manage')
   const canManageVisitors = hasPermission('Visitors.Manage')
+  const canDeleteEmployees = hasPermission('Employees.Delete')
   const { startLoading, stopLoading } = useLoading()
   const { activeModule } = useModule()
   // Жильцы живут только в модуле ЖКХ: в Workforce их вкладки нет вовсе.
@@ -111,6 +112,12 @@ export function PeopleManagementPage() {
   const [companyName, setCompanyName] = useState<string | null>(null)
   const [departments, setDepartments] = useState<DepartmentTreeItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  // Массовое удаление: выбор живёт на активной вкладке и сбрасывается при её смене,
+  // смене поиска и после самого удаления — иначе можно удалить не то, что видно.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkResult, setBulkResult] = useState<{ deleted: number; warnings: string[] } | null>(null)
   const [deptFilter, setDeptFilter] = useState<string>('')
   const [currentPage, setCurrentPage] = useState(1)
   const PAGE_SIZE = 20
@@ -255,6 +262,35 @@ export function PeopleManagementPage() {
       + visitors.filter((v) => v.isActive).length
   }, [employees, residents, visitors])
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+
+  /** Удаляет выбранные профили: гости и работники живут на разных эндпоинтах. */
+  async function deleteSelected() {
+    if (!token || selectedIds.size === 0) return
+    const ids = [...selectedIds]
+    setBulkConfirmOpen(false)
+    setBulkDeleting(true)
+    setError(null)
+    try {
+      const path = tab === 'visitors' ? '/api/visitors/bulk-delete' : '/api/employees/bulk-delete'
+      const res = await apiRequest<{ deleted: number; missing: number; syncWarnings: string[] }>(path, {
+        method: 'POST', token, body: JSON.stringify({ personIds: ids }),
+      })
+      setSelectedIds(new Set())
+      await Promise.all([loadEmployees(), loadResidents(), loadVisitors()])
+      setBulkResult({ deleted: res?.deleted ?? ids.length, warnings: res?.syncWarnings ?? [] })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('people.bulk.failed'))
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   // Добавление вынесено на отдельную страницу /people/new/:type
   // Вид берём из активной вкладки: с вкладки «Жильцы» заводится жилец.
   function openCreatePage() {
@@ -379,6 +415,18 @@ export function PeopleManagementPage() {
     [filteredList, currentPage, PAGE_SIZE]
   )
 
+  // Удаление гостя входит в Visitors.Manage, у работников для него отдельное право.
+  const canDeleteCurrentKind = tab === 'visitors' ? canManageVisitors : canDeleteEmployees
+  const allOnPageSelected = list.length > 0 && list.every((item) => selectedIds.has(item.id))
+  /** Галочка в заголовке выбирает или снимает только текущую страницу списка. */
+  const toggleAllOnPage = () =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allOnPageSelected) list.forEach((item) => next.delete(item.id))
+      else list.forEach((item) => next.add(item.id))
+      return next
+    })
+
   return (
     <AppLayout onAction={openCreatePage}>
       <div className="flex-1 overflow-y-auto bg-background-light pb-20 md:pb-0">
@@ -446,7 +494,7 @@ export function PeopleManagementPage() {
               <Input
                 placeholder={tab === 'employees' ? t('people.searchEmployees') : tab === 'residents' ? t('people.searchResidents') : t('people.searchVisitors')}
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); setSelectedIds(new Set()) }}
                 icon="search"
                 className="bg-white shadow-sm"
               />
@@ -529,7 +577,7 @@ export function PeopleManagementPage() {
             {tabOrder.map((key) => (
               <button
                 key={key}
-                onClick={() => setTab(key)}
+                onClick={() => { setTab(key); setSelectedIds(new Set()) }}
                 className={`pb-2.5 text-xs font-black uppercase tracking-widest border-b-2 transition-colors ${tab === key ? 'border-primary text-primary' : 'border-transparent text-text-light'
                   }`}
               >
@@ -537,6 +585,40 @@ export function PeopleManagementPage() {
               </button>
             ))}
           </div>
+
+          {/* Панель массового удаления: появляется у тех, кому удаление разрешено. */}
+          {canDeleteCurrentKind && list.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleAllOnPage}
+                    className="w-4 h-4 rounded border-border-light text-primary focus:ring-primary/30 cursor-pointer"
+                  />
+                  <span className="text-[11px] font-black uppercase tracking-widest text-text-light">{t('people.bulk.selectPage')}</span>
+                </label>
+                {selectedIds.size > 0 && (
+                  <span className="text-[11px] font-bold text-text-muted">{t('people.bulk.selected', { count: selectedIds.size })}</span>
+                )}
+              </div>
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set())}
+                    className="px-2 py-1 text-[11px] font-black uppercase tracking-widest text-text-light hover:text-primary"
+                  >
+                    {t('people.bulk.clear')}
+                  </button>
+                  <Button variant="danger" icon="delete" size="sm" onClick={() => setBulkConfirmOpen(true)}>
+                    {t('people.bulk.delete')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* List Layout */}
           <div className="space-y-3">
@@ -576,6 +658,18 @@ export function PeopleManagementPage() {
                     className="flex items-center justify-between p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl active:scale-[0.99] transition-all cursor-pointer group"
                   >
                     <div className="flex items-center gap-4">
+                      {canDeleteCurrentKind && (
+                        /* Клик по галочке не должен открывать карточку. */
+                        <label onClick={(e) => e.stopPropagation()} className="shrink-0 cursor-pointer p-1">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(item.id)}
+                            onChange={() => toggleSelected(item.id)}
+                            aria-label={t('people.bulk.selectOne', { name: `${item.firstName} ${item.lastName}`.trim() })}
+                            className="w-4 h-4 rounded border-border-light text-primary focus:ring-primary/30 cursor-pointer"
+                          />
+                        </label>
+                      )}
                       <div className="w-12 h-12 shrink-0 rounded-2xl overflow-hidden bg-primary/10 flex items-center justify-center">
                         {item.primaryFaceId ? (
                           <FaceThumbnail faceId={item.primaryFaceId} token={token} className="w-full h-full object-cover" />
@@ -665,6 +759,59 @@ export function PeopleManagementPage() {
       </div>
 
       {/* Modals */}
+      {/* Подтверждение массового удаления */}
+      <Modal
+        isOpen={bulkConfirmOpen}
+        onClose={() => setBulkConfirmOpen(false)}
+        title={t('people.bulk.confirmTitle')}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-dark">{t('people.bulk.confirmBody', { count: selectedIds.size })}</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkConfirmOpen(false)}>{t('common.cancel')}</Button>
+            <Button variant="danger" icon="delete" onClick={deleteSelected}>{t('people.bulk.delete')}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Пока идёт удаление: людей ещё снимают с устройств, закрывать окно нельзя. */}
+      <Modal
+        isOpen={bulkDeleting}
+        onClose={() => { /* закрытие запрещено: идёт удаление */ }}
+        hideClose
+        title={t('people.bulk.deletingTitle')}
+      >
+        <div className="flex items-center gap-4 py-2">
+          <div className="w-10 h-10 shrink-0 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+          <p className="text-sm font-bold text-text-dark">{t('people.bulk.deletingBody')}</p>
+        </div>
+      </Modal>
+
+      {/* Итог: сколько удалено и с каких устройств снять не удалось. */}
+      <Modal
+        isOpen={bulkResult !== null}
+        onClose={() => setBulkResult(null)}
+        title={t('people.bulk.doneTitle')}
+      >
+        <div className="space-y-4">
+          <p className="text-sm font-bold text-text-dark">{t('people.bulk.deleted', { count: bulkResult?.deleted ?? 0 })}</p>
+          {bulkResult && bulkResult.warnings.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase tracking-widest text-error-text">{t('people.bulk.syncWarnings')}</p>
+              <ul className="max-h-48 overflow-y-auto rounded-xl bg-error-bg p-3 space-y-1">
+                {bulkResult.warnings.map((w, i) => (
+                  <li key={i} className="text-xs text-error-text">{w}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-xs text-text-light">{t('people.bulk.allSynced')}</p>
+          )}
+          <div className="flex justify-end">
+            <Button onClick={() => setBulkResult(null)}>{t('common.ok')}</Button>
+          </div>
+        </div>
+      </Modal>
       <Modal
         isOpen={importModalOpen}
         title={t('people.importFromDevices')}

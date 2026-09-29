@@ -1676,6 +1676,22 @@
     }
   },
   "people": {
+    "bulk": {
+      "selectPage": "Səhifəni seç",
+      "selected": "Seçilib: {{count}}",
+      "selectOne": "{{name}} seçilsin",
+      "clear": "Seçimi ləğv et",
+      "delete": "Seçilmişləri sil",
+      "confirmTitle": "Profillərin silinməsi",
+      "confirmBody": "Seçilmiş profillər ({{count}}) silinsin? İnsanlar kartları, üzləri və barmaq izləri ilə birlikdə qurğulardan çıxarılacaq. Bunu geri qaytarmaq mümkün deyil.",
+      "deletingTitle": "Profillər silinir",
+      "deletingBody": "Profillər silinir və qurğulardan çıxarılır. Pəncərəni bağlamayın.",
+      "doneTitle": "Hazırdır",
+      "deleted": "Silinmiş profillər: {{count}}",
+      "syncWarnings": "Qurğularla sinxronizasiya xəbərdarlıqları:",
+      "allSynced": "Bütün qurğular yeniləndi.",
+      "failed": "Seçilmiş profilləri silmək alınmadı"
+    },
     "title": "İşçi heyətinin idarə edilməsi",
     "description": "İşçilərinizi, qonaqları və onların təhlükəsizlik etimadnamələrini idarə edin.",
     "addPeople": "Şəxs əlavə et",
