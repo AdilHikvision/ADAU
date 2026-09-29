@@ -119,6 +119,13 @@ public sealed class PermissionService(AppDbContext dbContext, IMemoryCache cache
 public sealed class PermissionRequirement(string permission) : IAuthorizationRequirement
 {
     public string Permission { get; } = permission;
+
+    /// <summary>
+    /// Разрешения, любого из которых достаточно. Имя policy вида "A|B" описывает
+    /// справочник, который нужен нескольким разделам: например дерево отделов читают
+    /// и кадровик, и отчёты, хотя право Departments.View есть только у первого.
+    /// </summary>
+    public string[] AnyOf { get; } = permission.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }
 
 public sealed class PermissionAuthorizationHandler : AuthorizationHandler<PermissionRequirement>
@@ -141,14 +148,19 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
         if (service is null) return;
 
         var perms = await service.GetPermissionsForUserAsync(context.User);
-        if (perms.Contains(requirement.Permission))
+        foreach (var permission in requirement.AnyOf)
+        {
+            if (!perms.Contains(permission)) continue;
             context.Succeed(requirement);
+            return;
+        }
     }
 }
 
 /// <summary>
 /// Динамический policy provider: имя policy = строка permission'а. Это позволяет писать
 /// .RequirePermission(Permissions.X) без регистрации каждой policy руками.
+/// Имя вида "A|B" — доступ по любому из перечисленных прав (см. PermissionRequirement.AnyOf).
 /// </summary>
 public sealed class PermissionPolicyProvider(IOptions<AuthorizationOptions> options)
     : IAuthorizationPolicyProvider
@@ -157,7 +169,8 @@ public sealed class PermissionPolicyProvider(IOptions<AuthorizationOptions> opti
 
     public Task<AuthorizationPolicy?> GetPolicyAsync(string policyName)
     {
-        if (!string.IsNullOrEmpty(policyName) && Permissions.All.Contains(policyName))
+        var parts = policyName?.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        if (parts.Length > 0 && parts.All(Permissions.All.Contains))
         {
             var policy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()

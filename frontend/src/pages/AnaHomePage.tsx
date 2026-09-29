@@ -56,7 +56,11 @@ const fmtTime = (iso: string) =>
 
 export function AnaHomePage() {
   const { t, i18n } = useTranslation()
-  const { token } = useAuth()
+  const { token, hasPermission } = useAuth()
+  // Главная собрана из данных посещаемости: роли без этих прав сервер отвечает 403,
+  // поэтому запросы не отправляем — виджеты просто остаются пустыми.
+  const canViewAttendance = hasPermission('Attendance.View')
+  const canViewLeaves = hasPermission('Leaves.View')
   const navigate = useNavigate()
   const [daily, setDaily] = useState<DailyRow[]>([])
   const [leaves, setLeaves] = useState<LeaveRow[]>([])
@@ -65,8 +69,10 @@ export function AnaHomePage() {
 
   useEffect(() => {
     if (!token) return
-    apiRequest<DailyRow[]>('/api/attendance/daily', { token }).then(setDaily).catch(() => setDaily([]))
-    apiRequest<LeaveRow[]>('/api/leaves', { token }).then((l) => setLeaves(l.slice(0, 3))).catch(() => setLeaves([]))
+    if (canViewAttendance)
+      apiRequest<DailyRow[]>('/api/attendance/daily', { token }).then(setDaily).catch(() => setDaily([]))
+    if (canViewLeaves)
+      apiRequest<LeaveRow[]>('/api/leaves', { token }).then((l) => setLeaves(l.slice(0, 3))).catch(() => setLeaves([]))
     // Həftəlik statistika: cari həftə (B.e - B.)
     const now = new Date()
     const monday = new Date(now)
@@ -75,9 +81,10 @@ export function AnaHomePage() {
     sunday.setDate(monday.getDate() + 6)
     const iso = (d: Date) => d.toISOString().slice(0, 10)
     setWeekFrom(monday)
-    apiRequest<PeriodRow[]>(`/api/attendance/period?from=${iso(monday)}&to=${iso(sunday)}`, { token })
-      .then(setWeek).catch(() => setWeek([]))
-  }, [token])
+    if (canViewAttendance)
+      apiRequest<PeriodRow[]>(`/api/attendance/period?from=${iso(monday)}&to=${iso(sunday)}`, { token })
+        .then(setWeek).catch(() => setWeek([]))
+  }, [token, canViewAttendance, canViewLeaves])
 
   const stats = useMemo(() => {
     const workRows = daily.filter((r) => !r.isDayOff)

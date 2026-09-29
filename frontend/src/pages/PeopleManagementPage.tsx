@@ -65,27 +65,42 @@ type TabType = 'employees' | 'residents' | 'visitors'
 /** Жильцы приходят с того же эндпоинта, что и работники, — разделяет их параметр kind. */
 const TAB_KIND: Record<'employees' | 'residents', string> = { employees: 'employee', residents: 'resident' }
 
-/** Порядок вкладок: в ЖКХ первыми идут жильцы, в остальных модулях их нет вовсе. */
-const TAB_ORDER = (isHousing: boolean): TabType[] =>
-  isHousing ? ['residents', 'employees', 'visitors'] : ['employees', 'visitors']
+/** Порядок вкладок: в ЖКХ первыми идут жильцы, в остальных модулях их нет вовсе.
+ *  Вкладка показывается только с правом на её людей: без него сервер отвечает 403
+ *  (жильцы приходят с эндпоинта работников, поэтому им нужно то же право). */
+const TAB_ORDER = (isHousing: boolean, withEmployees: boolean, withVisitors: boolean): TabType[] => [
+  ...(isHousing && withEmployees ? ['residents' as TabType] : []),
+  ...(withEmployees ? ['employees' as TabType] : []),
+  ...(withVisitors ? ['visitors' as TabType] : []),
+]
 
 export function PeopleManagementPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
-  const { token } = useAuth()
+  const { token, hasPermission } = useAuth()
+  // Роль может вести работников, но не видеть гостей и устройства: такие запросы
+  // сервер отклоняет, поэтому их не отправляем и соответствующий UI не показываем.
+  const canViewEmployees = hasPermission('Employees.View')
+  const canViewVisitors = hasPermission('Visitors.View')
+  const canImportFromDevices = hasPermission('Devices.View')
+  const canManageEmployees = hasPermission('Employees.Manage')
+  const canManageVisitors = hasPermission('Visitors.Manage')
   const { startLoading, stopLoading } = useLoading()
   const { activeModule } = useModule()
   // Жильцы живут только в модуле ЖКХ: в Workforce их вкладки нет вовсе.
   const isHousing = activeModule === 'housing'
   const [selectedTab, setTab] = useState<TabType | null>(null)
-  // Модуль могли переключить, пока открыта вкладка «Жильцы».
-  // Пока пользователь не выбрал вкладку сам, показываем главную для модуля:
-  // в ЖКХ это жильцы, в остальных — работники.
-  const defaultTab: TabType = isHousing ? 'residents' : 'employees'
-  const tab: TabType = selectedTab === null || (!isHousing && selectedTab === 'residents')
+  // Доступные вкладки: модуль могли переключить, пока была открыта вкладка «Жильцы»,
+  // а права — урезать. Пока пользователь не выбрал вкладку сам, показываем первую
+  // доступную: в ЖКХ это жильцы, в остальных модулях — работники либо гости.
+  const tabOrder = useMemo(() => TAB_ORDER(isHousing, canViewEmployees, canViewVisitors), [isHousing, canViewEmployees, canViewVisitors])
+  const defaultTab: TabType = tabOrder[0] ?? 'employees'
+  const tab: TabType = selectedTab === null || !tabOrder.includes(selectedTab)
     ? defaultTab
     : selectedTab
+  // Заводить работника и заводить гостя — разные права; кнопка привязана к вкладке.
+  const canAddCurrentKind = tab === 'visitors' ? canManageVisitors : canManageEmployees
   const [statusFilterEmployees, setStatusFilterEmployees] = useState({ active: true, dismissed: false })
   const [statusFilterVisitors, setStatusFilterVisitors] = useState({ active: true, blocked: false })
   const [employees, setEmployees] = useState<EmployeeResponse[]>([])
@@ -127,7 +142,7 @@ export function PeopleManagementPage() {
   } | null>(null)
 
   const loadEmployees = useCallback(async () => {
-    if (!token) return
+    if (!token || !canViewEmployees) { setEmployees([]); return }
     setError(null)
     try {
       const params = new URLSearchParams()
@@ -138,11 +153,11 @@ export function PeopleManagementPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : t('people.errors.loadEmployees'))
     }
-  }, [token, searchQuery, t])
+  }, [token, searchQuery, canViewEmployees, t])
 
   /** Жильцы есть только в режиме ЖКХ — в режиме компании запрос не шлём вовсе. */
   const loadResidents = useCallback(async () => {
-    if (!token || !isHousing) { setResidents([]); return }
+    if (!token || !isHousing || !canViewEmployees) { setResidents([]); return }
     setError(null)
     try {
       const params = new URLSearchParams()
@@ -153,10 +168,10 @@ export function PeopleManagementPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : t('people.errors.loadResidents'))
     }
-  }, [token, searchQuery, isHousing, t])
+  }, [token, searchQuery, isHousing, canViewEmployees, t])
 
   const loadVisitors = useCallback(async () => {
-    if (!token) return
+    if (!token || !canViewVisitors) { setVisitors([]); return }
     setError(null)
     try {
       const params = new URLSearchParams()
@@ -166,7 +181,7 @@ export function PeopleManagementPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : t('people.errors.loadVisitors'))
     }
-  }, [token, searchQuery, t])
+  }, [token, searchQuery, canViewVisitors, t])
 
   // Название организации для шапки пропуска. Ошибку глотаем: билет без неё
   // остаётся валидным, а список гостей из-за настройки падать не должен.
@@ -374,12 +389,16 @@ export function PeopleManagementPage() {
             description={t(isHousing ? 'people.descriptionHousing' : 'people.description')}
             actions={
               <div className="flex gap-2">
-                <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
-                  {t('common.import')}
-                </Button>
-                <Button icon="person_add" size="md" onClick={openCreatePage} className="shadow-md">
-                  {t('people.addPeople')}
-                </Button>
+                {canImportFromDevices && (
+                  <Button variant="outline" icon="upload" size="md" onClick={openImportModal} className="shadow-sm">
+                    {t('common.import')}
+                  </Button>
+                )}
+                {canAddCurrentKind && (
+                  <Button icon="person_add" size="md" onClick={openCreatePage} className="shadow-md">
+                    {t('people.addPeople')}
+                  </Button>
+                )}
               </div>
             }
           />
@@ -402,20 +421,24 @@ export function PeopleManagementPage() {
               <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('common.active')}</p>
               <p className="text-2xl font-black text-primary leading-none">{activeCount}</p>
             </div>
-            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.employees')}</p>
-              <p className="text-2xl font-black text-primary leading-none">{employees.length}</p>
-            </div>
-            {isHousing && (
+            {canViewEmployees && (
+              <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.employees')}</p>
+                <p className="text-2xl font-black text-primary leading-none">{employees.length}</p>
+              </div>
+            )}
+            {isHousing && canViewEmployees && (
               <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
                 <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.residents')}</p>
                 <p className="text-2xl font-black text-primary leading-none">{residents.length}</p>
               </div>
             )}
-            <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
-              <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.visitors')}</p>
-              <p className="text-2xl font-black text-primary leading-none">{visitors.length}</p>
-            </div>
+            {canViewVisitors && (
+              <div className="bg-surface p-4 rounded-2xl shadow-md flex flex-col items-center md:items-start text-center md:text-left">
+                <p className="text-[10px] font-black text-text-light uppercase tracking-widest mb-1">{t('people.visitors')}</p>
+                <p className="text-2xl font-black text-primary leading-none">{visitors.length}</p>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
@@ -428,9 +451,11 @@ export function PeopleManagementPage() {
                 className="bg-white shadow-sm"
               />
             </div>
-            <div className="flex md:hidden gap-2">
-              <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">{t('common.import')}</Button>
-            </div>
+            {canImportFromDevices && (
+              <div className="flex md:hidden gap-2">
+                <Button fullWidth variant="outline" icon="upload" size="sm" onClick={openImportModal} className="shadow-sm">{t('common.import')}</Button>
+              </div>
+            )}
           </div>
 
           {/* Department filter — у жильца отдела нет, фильтр обнулил бы список. */}
@@ -501,7 +526,7 @@ export function PeopleManagementPage() {
           {/* Tabs. Вкладка жильцов есть только в модуле ЖКХ и стоит там первой:
               жильцов в доме больше, чем работников МТК. */}
           <div className="flex overflow-x-auto no-scrollbar gap-8 border-b border-border-light">
-            {TAB_ORDER(isHousing).map((key) => (
+            {tabOrder.map((key) => (
               <button
                 key={key}
                 onClick={() => setTab(key)}

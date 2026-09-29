@@ -62,6 +62,13 @@ foreach (var baseDir in Microsoft.Extensions.Hosting.WindowsServices.WindowsServ
 // регистрации (frontend/src/lib/validity.ts). Держать значения согласованными.
 const int MaxValidityYears = 6;
 
+// Справочники, без которых не заполнить карточку человека и не отфильтровать отчёт:
+// отделы, должности, компании. Право Departments.View есть далеко не у всех роли,
+// которым эти списки нужны, поэтому доступ открыт по любому из перечисленных прав
+// (policy вида "A|B" — см. PermissionRequirement.AnyOf).
+const string PeopleRefRead = "Departments.View|Employees.View|Visitors.View|Attendance.View|Reports.View|Payroll.View";
+const string CompaniesRefRead = "Companies.View|Departments.View|Employees.View|Visitors.View|Attendance.View|Reports.View|Payroll.View";
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService(options =>
 {
@@ -1868,7 +1875,7 @@ app.MapGet("/api/companies", async (AppDbContext dbContext, CancellationToken ca
         .OrderBy(x => x.Name)
         .ToListAsync(cancellationToken);
     return Results.Ok(list.Select(x => new CompanyResponse(x.Id, x.Name, x.Description, x.CreatedUtc, x.UpdatedUtc)));
-}).RequireAuthorization("Companies.View");
+}).RequireAuthorization(CompaniesRefRead);
 
 app.MapPost("/api/companies", async (CreateCompanyRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -2190,7 +2197,7 @@ app.MapGet("/api/departments/tree", async (Guid? companyId, AppDbContext dbConte
     var visCounts = await dbContext.Visitors.Where(v => v.DepartmentId != null).GroupBy(v => v.DepartmentId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     var items = list.Select(d => new DepartmentTreeItem(d.Id, d.Name, d.Description, d.SortOrder, d.ParentId, d.CompanyId, empCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0, visCounts.FirstOrDefault(c => c.Key == d.Id)?.C ?? 0)).ToList();
     return Results.Ok(items);
-}).RequireAuthorization("Departments.View");
+}).RequireAuthorization(PeopleRefRead);
 
 app.MapGet("/api/departments/{id:guid}", async (Guid id, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
@@ -2394,7 +2401,7 @@ app.MapGet("/api/positions", async (AppDbContext dbContext, CancellationToken ca
     var empCounts = await dbContext.Employees.Where(e => e.Kind == PersonKind.Employee && e.PositionId != null).GroupBy(e => e.PositionId).Select(g => new { g.Key, C = g.Count() }).ToListAsync(cancellationToken);
     return Results.Ok(list.Select(p => new PositionResponse(p.Id, p.Name, p.Description, p.SortOrder,
         empCounts.FirstOrDefault(c => c.Key == p.Id)?.C ?? 0)));
-}).RequireAuthorization("Departments.View");
+}).RequireAuthorization(PeopleRefRead);
 
 app.MapPost("/api/positions", async (CreatePositionRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
