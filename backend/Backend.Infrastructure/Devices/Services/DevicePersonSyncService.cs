@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -662,6 +663,43 @@ public sealed class DevicePersonSyncService(
         if (device is null)
             return new DeviceSyncResult(false, "Устройство не найдено.");
 
+        return await DeletePersonFromDeviceCoreAsync(employeeNo, device, cancellationToken);
+    }
+
+    /// <summary>
+    /// Снимает человека со всех устройств. Устройства обрабатываются параллельно: у удаления
+    /// длинная лестница форматов (13 запросов, каждый по всем портам с 30-секундным таймаутом),
+    /// поэтому последовательный обход с недоступным устройством растягивался на десятки минут —
+    /// в UI это выглядело как зависшее удаление профиля.
+    /// </summary>
+    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePersonFromAllDevicesAsync(string employeeNo, CancellationToken cancellationToken = default)
+    {
+        // Список читаем заранее: внутри параллельных задач к dbContext обращаться нельзя.
+        var devices = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
+        var outcomes = new ConcurrentBag<DevicePersonDeleteOutcome>();
+
+        await Parallel.ForEachAsync(
+            devices,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+            async (device, token) =>
+            {
+                var result = await DeletePersonFromDeviceCoreAsync(employeeNo, device, token);
+                outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name, result));
+            });
+
+        return outcomes.OrderBy(o => o.DeviceName, StringComparer.CurrentCulture).ToList();
+    }
+
+    private async Task<DeviceSyncResult> DeletePersonFromDeviceCoreAsync(string employeeNo, Device device, CancellationToken cancellationToken)
+    {
+        // Короткая проверка связи перед лестницей форматов: варианты тела нужны только
+        // устройству, которое отвечает и не понимает формат. Если оно молчит, каждая
+        // следующая попытка упрётся в тот же таймаут, поэтому выходим сразу.
+        var probe = CreateClient(device, TimeSpan.FromSeconds(4));
+        var (alive, _, probeError) = await probe.GetAsync("ISAPI/System/deviceInfo?format=json", cancellationToken);
+        if (!alive)
+            return new DeviceSyncResult(false, probeError ?? "Устройство недоступно.");
+
         var client = CreateClient(device);
         var escapedNo = Uri.EscapeDataString(employeeNo);
 
@@ -966,7 +1004,10 @@ public sealed class DevicePersonSyncService(
         }
     }
 
-    private IsapiClient CreateClient(Device device)
+    private IsapiClient CreateClient(Device device) => CreateClient(device, TimeSpan.FromSeconds(30));
+
+    /// <summary>Клиент к устройству. Короткий таймаут нужен проверке связи перед длинными операциями.</summary>
+    private IsapiClient CreateClient(Device device, TimeSpan timeout)
     {
         var username = configuration["Hikvision:Username"] ?? "admin";
         var password = (configuration["Hikvision:Password"] ?? "").Trim();
@@ -979,7 +1020,7 @@ public sealed class DevicePersonSyncService(
             device.Port,
             cred.UserName ?? "admin",
             cred.Password ?? "",
-            TimeSpan.FromSeconds(30));
+            timeout);
     }
 
 }

@@ -175,7 +175,13 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Удаляет пользователя (Person) с устройства по employeeNo.</summary>
     Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Снимает пользователя со всех устройств сразу: запросы идут параллельно,
+    /// а недоступные устройства отсекаются короткой проверкой (см. реализацию).</summary>
+    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePersonFromAllDevicesAsync(string employeeNo, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Итог удаления человека с одного устройства — имя нужно для предупреждения в UI.</summary>
+public sealed record DevicePersonDeleteOutcome(Guid DeviceId, string DeviceName, DeviceSyncResult Result);
 
 /// <summary>Результат захвата лица с устройства.
 /// MessageCode — ключ для локализации на клиенте; Message остаётся человекочитаемым запасным

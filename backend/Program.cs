@@ -2941,16 +2941,13 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
 
     var employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(entity.EmployeeNo) ? entity.EmployeeNo!.Trim() : entity.Id.ToString("N")[..32]);
 
-    var deviceIds = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
+    // Со всех устройств сразу: параллельно и с отсечкой недоступных по короткой проверке.
     var syncWarnings = new List<string>();
-    foreach (var device in deviceIds)
+    foreach (var outcome in await syncService.DeletePersonFromAllDevicesAsync(employeeNo, cancellationToken))
     {
-        var result = await syncService.DeletePersonFromDeviceAsync(employeeNo, device.Id, cancellationToken);
-        if (!result.Success)
-        {
-            syncWarnings.Add($"Устройство \"{device.Name}\": {result.Message}");
-            logger.LogWarning("Delete employee {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, device.Id, result.Message);
-        }
+        if (outcome.Result.Success) continue;
+        syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
+        logger.LogWarning("Delete employee {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, outcome.DeviceId, outcome.Result.Message);
     }
 
     var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
@@ -3278,16 +3275,12 @@ app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext,
         ? entity.DocumentNumber.Trim()
         : entity.Id.ToString("N")[..Math.Min(32, 32)];
 
-    var deviceIds = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
     var syncWarnings = new List<string>();
-    foreach (var device in deviceIds)
+    foreach (var outcome in await syncService.DeletePersonFromAllDevicesAsync(employeeNo, cancellationToken))
     {
-        var result = await syncService.DeletePersonFromDeviceAsync(employeeNo, device.Id, cancellationToken);
-        if (!result.Success)
-        {
-            syncWarnings.Add($"Устройство \"{device.Name}\": {result.Message}");
-            logger.LogWarning("Delete visitor {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, device.Id, result.Message);
-        }
+        if (outcome.Result.Success) continue;
+        syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
+        logger.LogWarning("Delete visitor {EmployeeNo} from device {DeviceId}: {Error}", employeeNo, outcome.DeviceId, outcome.Result.Message);
     }
 
     var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
