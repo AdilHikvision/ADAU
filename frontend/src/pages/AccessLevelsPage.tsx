@@ -178,8 +178,12 @@ export function AccessLevelsPage() {
   const [blocks, setBlocks] = useState<PickerGroup[]>([])
   // Запись на устройства идёт не мгновенно: пока она длится, показываем окно
   // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
-  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove'; count: number; name?: string; done?: number; device?: string } | null>(null)
-  const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove'; added: number; alreadyAssigned: number; name?: string; warnings: string[] } | null>(null)
+  // Итог показываем разбивкой по устройствам: видно, куда записалось, а куда нет.
+  type DeviceOutcome = { name: string; done: number; skipped: number; errors: number }
+  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string } | null>(null)
+  // Снятие уровня и перезапись работают с выбранными в списке людьми.
+  const [selectedPeople, setSelectedPeople] = useState<Set<string>>(new Set())
+  const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
   const assignSaving = peopleProgress !== null
 
   /** Сколько людей показывать на карточке уровня — по правилам модуля. */
@@ -214,6 +218,8 @@ export function AccessLevelsPage() {
   async function openPeopleModal(item: AccessLevel) {
     setPeopleItem(item)
     setLevelPeople([])
+    // Выбор относится к составу конкретного уровня — начинаем с чистого.
+    setSelectedPeople(new Set())
     await loadLevelPeople(item.id)
   }
 
@@ -249,6 +255,13 @@ export function AccessLevelsPage() {
    */
   async function waitForDeviceSync(syncId: string, people: number, silenceMs = 120000) {
     const warnings: string[] = []
+    const devices = new Map<string, DeviceOutcome>()
+    const bump = (name: string, field: 'done' | 'skipped' | 'errors') => {
+      if (!name) return
+      const row = devices.get(name) ?? { name, done: 0, skipped: 0, errors: 0 }
+      row[field] += 1
+      devices.set(name, row)
+    }
     const hub = new HubConnectionBuilder()
       .withUrl(`${getHubUrl()}/hubs/devices`, {
         accessTokenFactory: () => token!,
@@ -272,7 +285,9 @@ export function AccessLevelsPage() {
         hub.on('PersonSyncProgress', (evt: { syncId: string; stage: string; deviceName?: string; message?: string | null }) => {
           if (!evt || evt.syncId !== syncId) return
           restartSilence()
+          if (evt.stage === 'done') bump(evt.deviceName ?? '', 'done')
           if (evt.stage === 'skipped' || evt.stage === 'error') {
+            bump(evt.deviceName ?? '', evt.stage === 'skipped' ? 'skipped' : 'errors')
             const text = evt.deviceName ? `${evt.deviceName}: ${evt.message ?? evt.stage}` : (evt.message ?? evt.stage)
             if (!warnings.includes(text)) warnings.push(text)
           }
@@ -291,7 +306,7 @@ export function AccessLevelsPage() {
     } finally {
       await hub.stop().catch(() => undefined)
     }
-    return { warnings, done }
+    return { warnings, done, devices: [...devices.values()].sort((a, b) => a.name.localeCompare(b.name)) }
   }
 
   async function assignPeople(personIds: string[]) {
@@ -309,13 +324,14 @@ export function AccessLevelsPage() {
       const added = res.added ?? 0
       const synced = added > 0
         ? await waitForDeviceSync(res.syncId ?? syncId, added)
-        : { warnings: [] as string[], done: 0 }
+        : { warnings: [] as string[], done: 0, devices: [] as DeviceOutcome[] }
       await loadLevelPeople(peopleItem.id)
       await loadData()
       setPeopleResult({
         kind: 'assign',
         added,
         alreadyAssigned: res.alreadyAssigned ?? 0,
+        devices: synced.devices,
         // Если фоновая запись не доложила обо всех, честно пишем это в итог:
         // уровень в базе стоит, но на турникете он может ещё не появиться.
         warnings: [
@@ -325,6 +341,82 @@ export function AccessLevelsPage() {
             ? [t('accessLevelPeople.syncIncomplete', { done: synced.done, total: added })]
             : []),
         ],
+      })
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
+    } finally {
+      setPeopleProgress(null)
+    }
+  }
+
+  const togglePersonSelected = (id: string) =>
+    setSelectedPeople((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  const allPeopleSelected = levelPeople.length > 0 && levelPeople.every((p) => selectedPeople.has(p.id))
+  const toggleAllPeople = () =>
+    setSelectedPeople(allPeopleSelected ? new Set() : new Set(levelPeople.map((p) => p.id)))
+
+  /** Снимает уровень с выбранных: доступ каждого пересчитывается по остальным его уровням. */
+  async function removeSelectedPeople() {
+    if (!token || !peopleItem || selectedPeople.size === 0) return
+    const ids = [...selectedPeople]
+    if (!window.confirm(t('accessLevelPeople.removeSelectedConfirm', { count: ids.length }))) return
+    const syncId = newId('sync').replace(/-/g, '')
+    setPeopleProgress({ kind: 'remove', count: ids.length, done: 0 })
+    setPeopleError(null)
+    try {
+      const res = await apiRequest<{ removed: number; syncId?: string; warnings?: string[] }>(
+        `/api/access-levels/${peopleItem.id}/people/remove`,
+        { method: 'POST', token, body: JSON.stringify({ personIds: ids, syncId }) },
+      )
+      const removed = res.removed ?? ids.length
+      const synced = await waitForDeviceSync(res.syncId ?? syncId, removed)
+      setSelectedPeople(new Set())
+      await loadLevelPeople(peopleItem.id)
+      await loadData()
+      setPeopleResult({
+        kind: 'remove',
+        added: removed,
+        alreadyAssigned: 0,
+        warnings: [...(res.warnings ?? []), ...synced.warnings],
+        devices: synced.devices,
+      })
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
+    } finally {
+      setPeopleProgress(null)
+    }
+  }
+
+  /** Перезапись: сперва стирает людей с их устройств, потом пишет заново. */
+  async function repushPeople() {
+    if (!token || !peopleItem || levelPeople.length === 0) return
+    const ids = selectedPeople.size > 0 ? [...selectedPeople] : levelPeople.map((p) => p.id)
+    if (!window.confirm(t('accessLevelPeople.repushConfirm', { count: ids.length }))) return
+    const syncId = newId('sync').replace(/-/g, '')
+    setPeopleProgress({ kind: 'repush', count: ids.length, done: 0 })
+    setPeopleError(null)
+    try {
+      const res = await apiRequest<{ count: number; syncId?: string; warnings?: string[] }>(
+        `/api/access-levels/${peopleItem.id}/people/repush`,
+        { method: 'POST', token, body: JSON.stringify({ personIds: ids, syncId }) },
+      )
+      const count = res.count ?? ids.length
+      const synced = await waitForDeviceSync(res.syncId ?? syncId, count)
+      await loadLevelPeople(peopleItem.id)
+      setPeopleResult({
+        kind: 'repush',
+        added: count,
+        alreadyAssigned: 0,
+        warnings: [
+          ...(res.warnings ?? []),
+          ...synced.warnings,
+          ...(count > synced.done ? [t('accessLevelPeople.syncIncomplete', { done: synced.done, total: count })] : []),
+        ],
+        devices: synced.devices,
       })
     } catch (e) {
       setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
@@ -822,12 +914,39 @@ export function AccessLevelsPage() {
             <div className="p-3 bg-error-bg text-error-text rounded-xl text-sm font-bold">{peopleError}</div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-bold text-text-light uppercase tracking-widest">
-              {t('accessLevelPeople.count', { count: levelPeople.length })}
-            </p>
-            <Button type="button" icon="person_add" onClick={openPeoplePicker} disabled={assignSaving}>
-              {t('accessLevelPeople.add')}
-            </Button>
+            <div className="flex items-center gap-3">
+              {levelPeople.length > 0 && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allPeopleSelected}
+                    onChange={toggleAllPeople}
+                    className="h-4 w-4 accent-primary cursor-pointer"
+                  />
+                  <span className="text-xs font-bold text-text-light uppercase tracking-widest">{t('accessLevelPeople.selectAll')}</span>
+                </label>
+              )}
+              <p className="text-xs font-bold text-text-light uppercase tracking-widest">
+                {selectedPeople.size > 0
+                  ? t('accessLevelPeople.selectedCount', { count: selectedPeople.size })
+                  : t('accessLevelPeople.count', { count: levelPeople.length })}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedPeople.size > 0 && (
+                <Button type="button" variant="danger" icon="person_remove" onClick={removeSelectedPeople} disabled={assignSaving}>
+                  {t('accessLevelPeople.removeSelected')}
+                </Button>
+              )}
+              {levelPeople.length > 0 && (
+                <Button type="button" variant="outline" icon="sync" onClick={repushPeople} disabled={assignSaving}>
+                  {selectedPeople.size > 0 ? t('accessLevelPeople.repushSelected') : t('accessLevelPeople.repushAll')}
+                </Button>
+              )}
+              <Button type="button" icon="person_add" onClick={openPeoplePicker} disabled={assignSaving}>
+                {t('accessLevelPeople.add')}
+              </Button>
+            </div>
           </div>
 
           {peopleLoading ? (
@@ -838,7 +957,14 @@ export function AccessLevelsPage() {
             <div className="max-h-96 overflow-y-auto rounded-xl border border-border-light divide-y divide-border-light">
               {levelPeople.map((p) => (
                 <div key={p.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <div className="min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={selectedPeople.has(p.id)}
+                    onChange={() => togglePersonSelected(p.id)}
+                    aria-label={`${p.firstName} ${p.lastName}`}
+                    className="h-4 w-4 shrink-0 accent-primary cursor-pointer"
+                  />
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold text-text-dark truncate">
                       {p.firstName} {p.lastName}
                       {p.employeeNo && <span className="ml-2 text-[10px] font-bold text-text-light">#{p.employeeNo}</span>}
@@ -870,17 +996,25 @@ export function AccessLevelsPage() {
         isOpen={peopleProgress !== null}
         onClose={() => { /* закрытие запрещено: идёт запись на устройства */ }}
         hideClose
-        title={t(peopleProgress?.kind === 'remove' ? 'accessLevelPeople.removingTitle' : 'accessLevelPeople.addingTitle')}
+        title={t(peopleProgress?.kind === 'remove'
+          ? 'accessLevelPeople.removingTitle'
+          : peopleProgress?.kind === 'repush'
+            ? 'accessLevelPeople.repushTitle'
+            : 'accessLevelPeople.addingTitle')}
       >
         <div className="flex items-center gap-4 py-2">
           <div className="w-10 h-10 shrink-0 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
           <div className="min-w-0">
             <p className="text-sm font-bold text-text-dark">
               {peopleProgress?.kind === 'remove'
-                ? t('accessLevelPeople.removingBody', { name: peopleProgress?.name ?? '' })
-                : t('accessLevelPeople.addingBody', { count: peopleProgress?.count ?? 0 })}
+                ? (peopleProgress.name
+                  ? t('accessLevelPeople.removingBody', { name: peopleProgress.name })
+                  : t('accessLevelPeople.removingSelectedBody', { count: peopleProgress.count }))
+                : peopleProgress?.kind === 'repush'
+                  ? t('accessLevelPeople.repushBody', { count: peopleProgress.count })
+                  : t('accessLevelPeople.addingBody', { count: peopleProgress?.count ?? 0 })}
             </p>
-            {peopleProgress?.kind === 'assign' && peopleProgress.done !== undefined && (
+            {peopleProgress?.kind !== 'remove' && peopleProgress?.done !== undefined && (
               <p className="mt-1 text-xs text-text-light truncate">
                 {t('accessLevelPeople.addingProgress', { done: peopleProgress.done, total: peopleProgress.count })}
                 {peopleProgress.device ? ` · ${peopleProgress.device}` : ''}
@@ -898,8 +1032,14 @@ export function AccessLevelsPage() {
       >
         <div className="space-y-4">
           <div className="space-y-1 text-sm font-bold text-text-dark">
-            {peopleResult?.kind === 'remove' ? (
-              <p>{t('accessLevelPeople.removedFrom', { name: peopleResult?.name ?? '' })}</p>
+            {peopleResult?.kind === 'repush' ? (
+              <p>{t('accessLevelPeople.repushed', { count: peopleResult?.added ?? 0 })}</p>
+            ) : peopleResult?.kind === 'remove' ? (
+              <p>
+                {peopleResult.name
+                  ? t('accessLevelPeople.removedFrom', { name: peopleResult.name })
+                  : t('accessLevelPeople.removedCount', { count: peopleResult.added })}
+              </p>
             ) : (
               <>
                 <p>{t('accessLevelPeople.added', { count: peopleResult?.added ?? 0 })}</p>
@@ -909,6 +1049,21 @@ export function AccessLevelsPage() {
               </>
             )}
           </div>
+          {/* Куда записалось, а куда нет — по устройствам. */}
+          {peopleResult?.devices && peopleResult.devices.length > 0 && (
+            <ul className="rounded-xl border border-border-light divide-y divide-border-light">
+              {peopleResult.devices.map((d) => (
+                <li key={d.name} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                  <span className="font-bold text-text-dark truncate">{d.name}</span>
+                  <span className="shrink-0 flex items-center gap-3">
+                    {d.done > 0 && <span className="text-success-text">{t('accessLevelPeople.deviceWritten', { count: d.done })}</span>}
+                    {d.skipped > 0 && <span className="text-text-light">{t('accessLevelPeople.deviceSkipped', { count: d.skipped })}</span>}
+                    {d.errors > 0 && <span className="text-error-text">{t('accessLevelPeople.deviceFailed', { count: d.errors })}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           {peopleResult && peopleResult.warnings.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-black uppercase tracking-widest text-error-text">{t('accessLevelPeople.syncWarnings')}</p>

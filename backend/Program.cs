@@ -1817,6 +1817,135 @@ app.MapDelete("/api/access-levels/{id:guid}/people/{personId:guid}", async (
     return Results.Ok(new { removed = 1, warnings });
 }).RequireAuthorization("AccessLevels.Manage");
 
+// Снять уровень сразу с нескольких людей. Как и назначение, отвечаем сразу: у каждого
+// снятого доступ на устройствах пересчитывается по остальным его уровням, а это минуты.
+app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
+    Guid id,
+    AssignAccessLevelPeopleRequest request,
+    AppDbContext dbContext,
+    IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime appLifetime,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (request.PersonIds is null || request.PersonIds.Length == 0)
+        return Results.BadRequest(new { message = "Не выбран ни один человек." });
+
+    var personIds = request.PersonIds.Distinct().ToList();
+    var links = await dbContext.EmployeeAccessLevels
+        .Where(x => x.AccessLevelId == id && personIds.Contains(x.EmployeeId))
+        .ToListAsync(cancellationToken);
+    if (links.Count == 0) return Results.NotFound();
+
+    dbContext.EmployeeAccessLevels.RemoveRange(links);
+    await dbContext.SaveChangesAsync(cancellationToken);
+
+    var removedIds = links.Select(l => l.EmployeeId).ToList();
+    var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    _ = Task.Run(async () =>
+    {
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var backgroundLogger = sp.GetRequiredService<ILogger<Program>>();
+        try
+        {
+            await SyncAccessLevelPeopleAsync(
+                syncId,
+                removedIds,
+                sp.GetRequiredService<AppDbContext>(),
+                sp.GetRequiredService<IDevicePersonSyncService>(),
+                sp.GetRequiredService<IDeviceConnectionManager>(),
+                sp.GetRequiredService<IDeviceArpStatusService>(),
+                sp.GetRequiredService<IDeviceActivityBroadcaster>(),
+                backgroundLogger,
+                appLifetime.ApplicationStopping);
+        }
+        catch (Exception ex)
+        {
+            backgroundLogger.LogError(ex,
+                "Access level {LevelId}: background sync after removing {Count} people failed", id, removedIds.Count);
+        }
+    }, CancellationToken.None);
+
+    return Results.Ok(new { removed = links.Count, syncId, warnings = Array.Empty<string>() });
+}).RequireAuthorization("AccessLevels.Manage");
+
+// Перезаписать людей на устройства: сначала стираем их с устройств своих уровней,
+// затем пишем заново. Нужно, когда на терминале остались старые или битые данные —
+// обычная синхронизация поверх них не всегда помогает.
+app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
+    Guid id,
+    AssignAccessLevelPeopleRequest request,
+    AppDbContext dbContext,
+    IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime appLifetime,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!await dbContext.AccessLevels.AnyAsync(x => x.Id == id, cancellationToken))
+        return Results.NotFound();
+
+    // Без списка — перезаписываем весь состав уровня.
+    var requested = (request.PersonIds ?? []).Distinct().ToList();
+    var peopleQuery = dbContext.EmployeeAccessLevels.AsNoTracking().Where(x => x.AccessLevelId == id);
+    if (requested.Count > 0) peopleQuery = peopleQuery.Where(x => requested.Contains(x.EmployeeId));
+    var personIds = await peopleQuery.Select(x => x.EmployeeId).Distinct().ToListAsync(cancellationToken);
+    if (personIds.Count == 0) return Results.BadRequest(new { message = "На уровне нет людей для перезаписи." });
+
+    var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    _ = Task.Run(async () =>
+    {
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var backgroundLogger = sp.GetRequiredService<ILogger<Program>>();
+        var db = sp.GetRequiredService<AppDbContext>();
+        var sync = sp.GetRequiredService<IDevicePersonSyncService>();
+        var token = appLifetime.ApplicationStopping;
+        try
+        {
+            // Стираем только с тех устройств, где человек и должен быть по своим уровням.
+            var people = await db.Employees
+                .AsNoTracking()
+                .Include(e => e.AccessLevels)
+                .ThenInclude(a => a.AccessLevel)
+                .ThenInclude(al => al!.Doors)
+                .Where(e => personIds.Contains(e.Id))
+                .ToListAsync(token);
+            var targets = people
+                .SelectMany(p =>
+                {
+                    var no = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(p.EmployeeNo) ? p.EmployeeNo!.Trim() : p.Id.ToString("N")[..32]);
+                    return p.AccessLevels
+                        .Where(a => a.AccessLevel is not null)
+                        .SelectMany(a => a.AccessLevel!.Doors)
+                        .Select(d => new DevicePersonDeleteTarget(d.DeviceId, no));
+                })
+                .Distinct()
+                .ToList();
+            await sync.DeletePeopleFromDevicesAsync(targets, token);
+
+            // И записываем заново — с прогрессом, как при обычном назначении.
+            await SyncAccessLevelPeopleAsync(
+                syncId,
+                personIds,
+                db,
+                sync,
+                sp.GetRequiredService<IDeviceConnectionManager>(),
+                sp.GetRequiredService<IDeviceArpStatusService>(),
+                sp.GetRequiredService<IDeviceActivityBroadcaster>(),
+                backgroundLogger,
+                token);
+        }
+        catch (Exception ex)
+        {
+            backgroundLogger.LogError(ex,
+                "Access level {LevelId}: repush of {Count} people failed", id, personIds.Count);
+        }
+    }, CancellationToken.None);
+
+    return Results.Ok(new { count = personIds.Count, syncId, warnings = Array.Empty<string>() });
+}).RequireAuthorization("AccessLevels.Manage");
+
 app.MapPost("/api/access-levels", async (CreateAccessLevelRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
 {
     var name = (request.Name ?? "").Trim();
@@ -11205,6 +11334,27 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
 
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
 
+    // Какие устройства уровней этой пачки реально отвечают — выясняем один раз.
+    // Иначе недоступное устройство тормозило бы запись каждого человека по отдельности.
+    var levelIdsInBatch = await dbContext.EmployeeAccessLevels.AsNoTracking()
+        .Where(x => personIds.Contains(x.EmployeeId))
+        .Select(x => x.AccessLevelId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var batchDeviceIds = await dbContext.AccessLevelDoors.AsNoTracking()
+        .Where(d => levelIdsInBatch.Contains(d.AccessLevelId))
+        .Select(d => d.DeviceId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var answeringDevices = batchDeviceIds.Count == 0
+        ? new HashSet<Guid>()
+        : (await syncService.FilterAnsweringDevicesAsync(batchDeviceIds, cancellationToken)).ToHashSet();
+    foreach (var deviceId in batchDeviceIds.Where(x => !answeringDevices.Contains(x)))
+    {
+        var name = devices.TryGetValue(deviceId, out var dev) ? dev.Name : deviceId.ToString();
+        logger.LogInformation("Access level sync: device {DeviceName} is not answering, skipped", name);
+    }
+
     foreach (var personId in personIds)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -11243,7 +11393,8 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
             arpStatusService,
             activityBroadcaster,
             logger,
-            cancellationToken);
+            cancellationToken,
+            answeringDevices);
 
         warnings.AddRange(personWarnings);
     }
@@ -11272,7 +11423,10 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
     IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster broadcaster,
     Microsoft.Extensions.Logging.ILogger logger,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    // Устройства, которые прямо сейчас отвечают. null — проверку не делали, полагаемся
+    // только на статус из ARP/SDK, как раньше.
+    IReadOnlySet<Guid>? answeringDevices = null)
 {
     var warnings = new List<string>();
     var total = deviceIds.Count;
@@ -11330,6 +11484,10 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
         // A device is online if either the SDK session or ARP/ISAPI check says so.
         var isOnline = !string.IsNullOrEmpty(deviceIdentifier)
             && (sdkOnlineIds.Contains(deviceIdentifier) || arpOnlineIds.Contains(deviceIdentifier));
+        // Проверка связи перед пачкой надёжнее статуса из кэша: устройство может числиться
+        // онлайн и при этом молчать, а тогда каждая запись стоит таймаута.
+        if (isOnline && answeringDevices is not null && !answeringDevices.Contains(deviceId))
+            isOnline = false;
         if (!isOnline)
         {
             warnings.Add($"Устройство \"{deviceName}\" офлайн — пропущено");

@@ -719,6 +719,28 @@ public sealed class DevicePersonSyncService(
             .ToList();
     }
 
+    public async Task<IReadOnlyCollection<Guid>> FilterAnsweringDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default)
+    {
+        if (deviceIds.Count == 0) return [];
+
+        var ids = deviceIds.Distinct().ToList();
+        var devices = await dbContext.Devices.AsNoTracking()
+            .Where(d => ids.Contains(d.Id))
+            .ToListAsync(cancellationToken);
+
+        var answering = new ConcurrentBag<Guid>();
+        await Parallel.ForEachAsync(
+            devices,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
+            async (device, token) =>
+            {
+                var alive = await IsDeviceAnsweringAsync(device, token);
+                if (alive.Answering) answering.Add(device.Id);
+            });
+
+        return answering.ToList();
+    }
+
     private async Task<DeviceSyncResult> DeletePersonFromDeviceCoreAsync(string employeeNo, Device device, CancellationToken cancellationToken)
     {
         var alive = await IsDeviceAnsweringAsync(device, cancellationToken);

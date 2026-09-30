@@ -182,6 +182,13 @@ public interface IDevicePersonSyncService
     /// никогда не записывали, и обращаться к ним незачем.
     /// </summary>
     Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Оставляет из списка только устройства, которые прямо сейчас отвечают. Статус из
+    /// ARP-кэша бывает устаревшим: устройство числится онлайн, но на запись не отвечает и
+    /// каждый запрос к нему упирается в таймаут. Проверка идёт параллельно и коротким
+    /// запросом, поэтому её дешевле сделать один раз на пачку людей.
+    /// </summary>
+    Task<IReadOnlyCollection<Guid>> FilterAnsweringDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Кого и с какого устройства снять.</summary>
