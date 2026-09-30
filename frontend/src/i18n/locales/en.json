@@ -3341,6 +3341,7 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "erasingProgress": "Erasing the old data from the devices…",
     "selectAll": "Select all",
     "selectedCount": "Selected: {{count}}",
     "removeSelected": "Remove level",

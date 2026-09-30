@@ -673,7 +673,7 @@ public sealed class DevicePersonSyncService(
     /// иначе растягивало бы удаление на десятки минут. Какие устройства трогать, решает
     /// вызывающий код по уровням доступа человека.
     /// </summary>
-    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, IProgress<DevicePersonDeleteProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         if (targets.Count == 0) return [];
 
@@ -705,11 +705,28 @@ public sealed class DevicePersonSyncService(
                 }
 
                 var client = CreateClient(device);
-                foreach (var employeeNo in people)
+                var handled = 0;
+                // Пачками по сто: ISAPI принимает список employeeNo одним запросом, и для
+                // тысячи человек это сотня запросов вместо тысячи. Прошивки, которые список
+                // не понимают, отваливаются на первой же пачке — тогда идём поштучно.
+                foreach (var chunk in people.Chunk(100))
                 {
-                    var result = await DeletePersonLadderAsync(employeeNo, client, token);
-                    if (!result.Success)
-                        outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name, result, employeeNo));
+                    token.ThrowIfCancellationRequested();
+                    var batch = await DeletePeopleLadderAsync(chunk, client, token);
+                    if (!batch.Success)
+                    {
+                        foreach (var employeeNo in chunk)
+                        {
+                            var result = await DeletePersonLadderAsync(employeeNo, client, token);
+                            if (!result.Success)
+                                outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name, result, employeeNo));
+                            handled++;
+                            progress?.Report(new DevicePersonDeleteProgress(device.Id, device.Name, handled, people.Count));
+                        }
+                        continue;
+                    }
+                    handled += chunk.Length;
+                    progress?.Report(new DevicePersonDeleteProgress(device.Id, device.Name, handled, people.Count));
                 }
             });
 
@@ -760,6 +777,46 @@ public sealed class DevicePersonSyncService(
         var probe = CreateClient(device, TimeSpan.FromSeconds(4));
         var (ok, _, error) = await probe.GetAsync("ISAPI/System/deviceInfo?format=json", cancellationToken);
         return (ok, error);
+    }
+
+    /// <summary>
+    /// Стирание списка людей одним запросом. Поддерживают не все прошивки, поэтому
+    /// вызывающий код при неуспехе повторяет поштучно.
+    /// </summary>
+    private static async Task<DeviceSyncResult> DeletePeopleLadderAsync(IReadOnlyList<string> employeeNos, IsapiClient client, CancellationToken cancellationToken)
+    {
+        if (employeeNos.Count == 1) return await DeletePersonLadderAsync(employeeNos[0], client, cancellationToken);
+
+        var path = "ISAPI/AccessControl/UserInfoDetail/Delete?format=json";
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = null };
+        var bodies = new[]
+        {
+            JsonSerializer.Serialize(new
+            {
+                UserInfoDetail = new
+                {
+                    mode = "byEmployeeNo",
+                    EmployeeNoList = employeeNos.Select(no => new { employeeNo = no }).ToArray()
+                }
+            }, options),
+            JsonSerializer.Serialize(new
+            {
+                UserInfoDetail = new
+                {
+                    mode = "byEmployeeNo",
+                    EmployeeNoList = employeeNos.Select(no => new { EmployeeNo = no }).ToArray()
+                }
+            }, options),
+        };
+
+        string? lastError = null;
+        foreach (var body in bodies)
+        {
+            var (success, _, error) = await client.PutAsync(path, body, "application/json", cancellationToken);
+            if (success) return new DeviceSyncResult(true, null);
+            lastError = error;
+        }
+        return new DeviceSyncResult(false, lastError);
     }
 
     /// <summary>Перебор форматов запроса удаления: прошивки Hikvision ждут разные тела.</summary>

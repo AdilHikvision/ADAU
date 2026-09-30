@@ -3332,6 +3332,7 @@
     "clear": "Təmizlə"
   },
   "accessLevelPeople": {
+    "erasingProgress": "Köhnə məlumatlar qurğulardan silinir…",
     "selectAll": "Hamısını seç",
     "selectedCount": "Seçilib: {{count}}",
     "removeSelected": "Səviyyəni ləğv et",

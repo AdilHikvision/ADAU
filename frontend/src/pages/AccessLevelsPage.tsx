@@ -180,7 +180,7 @@ export function AccessLevelsPage() {
   // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
   // Итог показываем разбивкой по устройствам: видно, куда записалось, а куда нет.
   type DeviceOutcome = { name: string; done: number; skipped: number; errors: number }
-  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string } | null>(null)
+  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string; erasing?: boolean } | null>(null)
   // Снятие уровня и перезапись работают с выбранными в списке людьми.
   const [selectedPeople, setSelectedPeople] = useState<Set<string>>(new Set())
   const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
@@ -253,7 +253,7 @@ export function AccessLevelsPage() {
    * считаем их. Если события перестали приходить, выходим по тишине — лучше показать итог
    * с оговоркой, чем держать окно вечно.
    */
-  async function waitForDeviceSync(syncId: string, people: number, silenceMs = 120000) {
+  async function waitForDeviceSync(syncId: string, silenceMs = 180000) {
     const warnings: string[] = []
     const devices = new Map<string, DeviceOutcome>()
     const bump = (name: string, field: 'done' | 'skipped' | 'errors') => {
@@ -291,13 +291,20 @@ export function AccessLevelsPage() {
             const text = evt.deviceName ? `${evt.deviceName}: ${evt.message ?? evt.stage}` : (evt.message ?? evt.stage)
             if (!warnings.includes(text)) warnings.push(text)
           }
+          // Сервер закрывает пачку отдельным событием: считать людей нельзя — часть
+          // может быть пропущена (не осталось уровней, устройство молчит).
+          if (evt.message === 'batch-complete') { stop(); return }
           if (evt.stage === 'complete') {
             done += 1
             setPeopleProgress((prev) => (prev ? { ...prev, done, device: '' } : prev))
-            if (done >= people) stop()
             return
           }
-          setPeopleProgress((prev) => (prev ? { ...prev, done, device: evt.deviceName ?? undefined } : prev))
+          setPeopleProgress((prev) => (prev ? {
+            ...prev,
+            done,
+            device: evt.deviceName ?? undefined,
+            erasing: evt.stage === 'erasing',
+          } : prev))
         })
 
         restartSilence()
@@ -323,7 +330,7 @@ export function AccessLevelsPage() {
       )
       const added = res.added ?? 0
       const synced = added > 0
-        ? await waitForDeviceSync(res.syncId ?? syncId, added)
+        ? await waitForDeviceSync(res.syncId ?? syncId)
         : { warnings: [] as string[], done: 0, devices: [] as DeviceOutcome[] }
       await loadLevelPeople(peopleItem.id)
       await loadData()
@@ -373,7 +380,7 @@ export function AccessLevelsPage() {
         { method: 'POST', token, body: JSON.stringify({ personIds: ids, syncId }) },
       )
       const removed = res.removed ?? ids.length
-      const synced = await waitForDeviceSync(res.syncId ?? syncId, removed)
+      const synced = await waitForDeviceSync(res.syncId ?? syncId)
       setSelectedPeople(new Set())
       await loadLevelPeople(peopleItem.id)
       await loadData()
@@ -405,7 +412,7 @@ export function AccessLevelsPage() {
         { method: 'POST', token, body: JSON.stringify({ personIds: ids, syncId }) },
       )
       const count = res.count ?? ids.length
-      const synced = await waitForDeviceSync(res.syncId ?? syncId, count)
+      const synced = await waitForDeviceSync(res.syncId ?? syncId)
       await loadLevelPeople(peopleItem.id)
       setPeopleResult({
         kind: 'repush',
@@ -1016,7 +1023,9 @@ export function AccessLevelsPage() {
             </p>
             {peopleProgress?.kind !== 'remove' && peopleProgress?.done !== undefined && (
               <p className="mt-1 text-xs text-text-light truncate">
-                {t('accessLevelPeople.addingProgress', { done: peopleProgress.done, total: peopleProgress.count })}
+                {peopleProgress.erasing
+                  ? t('accessLevelPeople.erasingProgress')
+                  : t('accessLevelPeople.addingProgress', { done: peopleProgress.done, total: peopleProgress.count })}
                 {peopleProgress.device ? ` · ${peopleProgress.device}` : ''}
               </p>
             )}

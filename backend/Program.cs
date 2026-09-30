@@ -1783,6 +1783,11 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
                 backgroundLogger.LogError(ex,
                     "Access level {LevelId}: background sync of {Count} people failed", id, peopleToSync.Count);
             }
+            finally
+            {
+                await NotifyBatchCompleteAsync(sp.GetRequiredService<IDeviceActivityBroadcaster>(),
+                    syncId, peopleToSync.Count, peopleToSync.Count, CancellationToken.None);
+            }
         }, CancellationToken.None);
     }
 
@@ -1841,29 +1846,69 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
     await dbContext.SaveChangesAsync(cancellationToken);
 
     var removedIds = links.Select(l => l.EmployeeId).ToList();
+
+    // Устройства снятого уровня и то, что человеку осталось разрешено другими уровнями:
+    // с устройств, куда его больше ничего не пускает, его нужно стереть, иначе он
+    // останется в памяти терминала с прежними правами.
+    var levelDeviceIds = await dbContext.AccessLevelDoors.AsNoTracking()
+        .Where(d => d.AccessLevelId == id)
+        .Select(d => d.DeviceId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var stillAllowed = await dbContext.EmployeeAccessLevels.AsNoTracking()
+        .Where(x => removedIds.Contains(x.EmployeeId))
+        .SelectMany(x => x.AccessLevel!.Doors.Select(d => new { x.EmployeeId, d.DeviceId }))
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var stillAllowedSet = stillAllowed.Select(x => (x.EmployeeId, x.DeviceId)).ToHashSet();
+    var peopleNos = await dbContext.Employees.AsNoTracking()
+        .Where(e => removedIds.Contains(e.Id))
+        .Select(e => new { e.Id, e.EmployeeNo })
+        .ToListAsync(cancellationToken);
+    var removeTargets = peopleNos
+        .SelectMany(p => levelDeviceIds
+            .Where(deviceId => !stillAllowedSet.Contains((p.Id, deviceId)))
+            .Select(deviceId => new DevicePersonDeleteTarget(deviceId,
+                TruncateEmployeeNo(!string.IsNullOrWhiteSpace(p.EmployeeNo) ? p.EmployeeNo!.Trim() : p.Id.ToString("N")[..32]))))
+        .Distinct()
+        .ToList();
+    // Тем, у кого остались другие уровни, набор дверей нужно переписать заново.
+    var stillHaveLevels = stillAllowed.Select(x => x.EmployeeId).Distinct().ToList();
+
     var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
     _ = Task.Run(async () =>
     {
         using var scope = scopeFactory.CreateScope();
         var sp = scope.ServiceProvider;
         var backgroundLogger = sp.GetRequiredService<ILogger<Program>>();
+        var broadcaster = sp.GetRequiredService<IDeviceActivityBroadcaster>();
         try
         {
-            await SyncAccessLevelPeopleAsync(
-                syncId,
-                removedIds,
-                sp.GetRequiredService<AppDbContext>(),
-                sp.GetRequiredService<IDevicePersonSyncService>(),
-                sp.GetRequiredService<IDeviceConnectionManager>(),
-                sp.GetRequiredService<IDeviceArpStatusService>(),
-                sp.GetRequiredService<IDeviceActivityBroadcaster>(),
-                backgroundLogger,
+            await sp.GetRequiredService<IDevicePersonSyncService>().DeletePeopleFromDevicesAsync(
+                removeTargets,
+                DeviceEraseProgress(broadcaster, syncId),
                 appLifetime.ApplicationStopping);
+
+            if (stillHaveLevels.Count > 0)
+                await SyncAccessLevelPeopleAsync(
+                    syncId,
+                    stillHaveLevels,
+                    sp.GetRequiredService<AppDbContext>(),
+                    sp.GetRequiredService<IDevicePersonSyncService>(),
+                    sp.GetRequiredService<IDeviceConnectionManager>(),
+                    sp.GetRequiredService<IDeviceArpStatusService>(),
+                    broadcaster,
+                    backgroundLogger,
+                    appLifetime.ApplicationStopping);
         }
         catch (Exception ex)
         {
             backgroundLogger.LogError(ex,
                 "Access level {LevelId}: background sync after removing {Count} people failed", id, removedIds.Count);
+        }
+        finally
+        {
+            await NotifyBatchCompleteAsync(broadcaster, syncId, removedIds.Count, removedIds.Count, CancellationToken.None);
         }
     }, CancellationToken.None);
 
@@ -1922,7 +1967,10 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                 })
                 .Distinct()
                 .ToList();
-            await sync.DeletePeopleFromDevicesAsync(targets, token);
+            await sync.DeletePeopleFromDevicesAsync(
+                targets,
+                DeviceEraseProgress(sp.GetRequiredService<IDeviceActivityBroadcaster>(), syncId),
+                token);
 
             // И записываем заново — с прогрессом, как при обычном назначении.
             await SyncAccessLevelPeopleAsync(
@@ -1940,6 +1988,11 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
         {
             backgroundLogger.LogError(ex,
                 "Access level {LevelId}: repush of {Count} people failed", id, personIds.Count);
+        }
+        finally
+        {
+            await NotifyBatchCompleteAsync(sp.GetRequiredService<IDeviceActivityBroadcaster>(),
+                syncId, personIds.Count, personIds.Count, CancellationToken.None);
         }
     }, CancellationToken.None);
 
@@ -3115,7 +3168,7 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
         .Distinct()
         .ToList();
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken: cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
@@ -3168,7 +3221,7 @@ app.MapPost("/api/employees/bulk-delete", async (BulkDeletePeopleRequest request
         .ToList();
 
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken: cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add(outcome.EmployeeNo is null
@@ -3512,7 +3565,7 @@ app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext,
         .Distinct()
         .ToList();
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken: cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
@@ -3562,7 +3615,7 @@ app.MapPost("/api/visitors/bulk-delete", async (BulkDeletePeopleRequest request,
         .ToList();
 
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken: cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add(outcome.EmployeeNo is null
@@ -11318,6 +11371,19 @@ app.Run();
 /// изменённый: на устройство уходит итоговый набор дверей, иначе снятие одного уровня
 /// отобрало бы доступ, выданный другими.
 /// </summary>
+// Конец пачки: клиент ждёт именно это событие, а не считает людей — иначе при пропуске
+// части людей (не осталось уровней, устройство молчит) окно висело бы до таймаута.
+// Стирание людей с устройства идёт пачками и может занимать минуты: без отчёта о ходе
+// окно в браузере выглядело зависшим и закрывалось по тишине.
+static IProgress<DevicePersonDeleteProgress> DeviceEraseProgress(IDeviceActivityBroadcaster broadcaster, string syncId)
+    => new Progress<DevicePersonDeleteProgress>(p =>
+        _ = broadcaster.NotifyPersonSyncProgressAsync(
+            syncId, "erasing", p.Done, p.Total, p.DeviceId, p.DeviceName, "Стирание с устройства…", CancellationToken.None));
+
+static Task NotifyBatchCompleteAsync(
+    IDeviceActivityBroadcaster broadcaster, string syncId, int done, int total, CancellationToken ct)
+    => broadcaster.NotifyPersonSyncProgressAsync(syncId, "complete", done, total, Guid.Empty, "", "batch-complete", ct);
+
 static async Task<List<string>> SyncAccessLevelPeopleAsync(
     string syncId,
     IReadOnlyCollection<Guid> personIds,

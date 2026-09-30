@@ -181,7 +181,7 @@ public interface IDevicePersonSyncService
     /// собирает вызывающий код из уровней доступа — на остальные устройства человека
     /// никогда не записывали, и обращаться к ним незачем.
     /// </summary>
-    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, IProgress<DevicePersonDeleteProgress>? progress = null, CancellationToken cancellationToken = default);
     /// <summary>
     /// Оставляет из списка только устройства, которые прямо сейчас отвечают. Статус из
     /// ARP-кэша бывает устаревшим: устройство числится онлайн, но на запись не отвечает и
@@ -190,6 +190,9 @@ public interface IDevicePersonSyncService
     /// </summary>
     Task<IReadOnlyCollection<Guid>> FilterAnsweringDevicesAsync(IReadOnlyCollection<Guid> deviceIds, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Ход стирания: сколько людей уже обработано на этом устройстве.</summary>
+public sealed record DevicePersonDeleteProgress(Guid DeviceId, string DeviceName, int Done, int Total);
 
 /// <summary>Кого и с какого устройства снять.</summary>
 public sealed record DevicePersonDeleteTarget(Guid DeviceId, string EmployeeNo);

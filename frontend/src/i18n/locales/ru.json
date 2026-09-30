@@ -3358,6 +3358,7 @@
     "clear": "Очистить"
   },
   "accessLevelPeople": {
+    "erasingProgress": "Стирание старых данных с устройств…",
     "selectAll": "Выбрать всех",
     "selectedCount": "Выбрано: {{count}}",
     "removeSelected": "Снять уровень",
