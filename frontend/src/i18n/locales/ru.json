@@ -3358,6 +3358,8 @@
     "clear": "Очистить"
   },
   "accessLevelPeople": {
+    "collapse": "Свернуть",
+    "progressBackgroundHint": "Окно можно закрыть — запись продолжится, ход виден на карточке уровня.",
     "erasingProgress": "Стирание старых данных с устройств…",
     "selectAll": "Выбрать всех",
     "selectedCount": "Выбрано: {{count}}",

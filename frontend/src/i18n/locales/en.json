@@ -3341,6 +3341,8 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "collapse": "Minimise",
+    "progressBackgroundHint": "You can close this window — writing continues, the progress is shown on the level card.",
     "erasingProgress": "Erasing the old data from the devices…",
     "selectAll": "Select all",
     "selectedCount": "Selected: {{count}}",

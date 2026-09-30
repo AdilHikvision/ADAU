@@ -3332,6 +3332,8 @@
     "clear": "Təmizlə"
   },
   "accessLevelPeople": {
+    "collapse": "Yığ",
+    "progressBackgroundHint": "Pəncərəni bağlaya bilərsiniz — yazma davam edir, gedişat səviyyə kartında görünür.",
     "erasingProgress": "Köhnə məlumatlar qurğulardan silinir…",
     "selectAll": "Hamısını seç",
     "selectedCount": "Seçilib: {{count}}",

@@ -180,7 +180,9 @@ export function AccessLevelsPage() {
   // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
   // Итог показываем разбивкой по устройствам: видно, куда записалось, а куда нет.
   type DeviceOutcome = { name: string; done: number; skipped: number; errors: number }
-  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string; erasing?: boolean } | null>(null)
+  const [peopleProgress, setPeopleProgress] = useState<{ levelId: string; kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string; erasing?: boolean } | null>(null)
+  // Окно можно свернуть: запись идёт на сервере и продолжится без открытого окна.
+  const [progressOpen, setProgressOpen] = useState(false)
   // Снятие уровня и перезапись работают с выбранными в списке людьми.
   const [selectedPeople, setSelectedPeople] = useState<Set<string>>(new Set())
   const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
@@ -321,7 +323,8 @@ export function AccessLevelsPage() {
     // syncId придумывает клиент: подписка должна начаться раньше, чем сервер зашлёт
     // первые события, иначе часть прогресса пройдёт мимо окна.
     const syncId = newId('sync').replace(/-/g, '')
-    setPeopleProgress({ kind: 'assign', count: personIds.length, done: 0 })
+    setPeopleProgress({ levelId: peopleItem.id, kind: 'assign', count: personIds.length, done: 0 })
+    setProgressOpen(true)
     setPeopleError(null)
     try {
       const res = await apiRequest<{ added: number; alreadyAssigned: number; syncId?: string; warnings?: string[] }>(
@@ -372,7 +375,8 @@ export function AccessLevelsPage() {
     const ids = [...selectedPeople]
     if (!window.confirm(t('accessLevelPeople.removeSelectedConfirm', { count: ids.length }))) return
     const syncId = newId('sync').replace(/-/g, '')
-    setPeopleProgress({ kind: 'remove', count: ids.length, done: 0 })
+    setPeopleProgress({ levelId: peopleItem.id, kind: 'remove', count: ids.length, done: 0 })
+    setProgressOpen(true)
     setPeopleError(null)
     try {
       const res = await apiRequest<{ removed: number; syncId?: string; warnings?: string[] }>(
@@ -404,7 +408,8 @@ export function AccessLevelsPage() {
     const ids = selectedPeople.size > 0 ? [...selectedPeople] : levelPeople.map((p) => p.id)
     if (!window.confirm(t('accessLevelPeople.repushConfirm', { count: ids.length }))) return
     const syncId = newId('sync').replace(/-/g, '')
-    setPeopleProgress({ kind: 'repush', count: ids.length, done: 0 })
+    setPeopleProgress({ levelId: peopleItem.id, kind: 'repush', count: ids.length, done: 0 })
+    setProgressOpen(true)
     setPeopleError(null)
     try {
       const res = await apiRequest<{ count: number; syncId?: string; warnings?: string[] }>(
@@ -436,7 +441,8 @@ export function AccessLevelsPage() {
     if (!token || !peopleItem) return
     const name = `${person.firstName} ${person.lastName}`
     if (!window.confirm(t('accessLevelPeople.removeConfirm', { name }))) return
-    setPeopleProgress({ kind: 'remove', count: 1, name })
+    setPeopleProgress({ levelId: peopleItem.id, kind: 'remove', count: 1, name })
+    setProgressOpen(true)
     setPeopleError(null)
     try {
       const res = await apiRequest<{ removed: number; warnings: string[] }>(
@@ -718,6 +724,19 @@ export function AccessLevelsPage() {
                           {' · '}
                           {t('accessLevelPeople.count', { count: peopleCountOf(item) })}
                         </p>
+                        {/* Свёрнутая операция: ход записи видно прямо на карточке. */}
+                        {peopleProgress?.levelId === item.id && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setProgressOpen(true) }}
+                            className="mt-1 flex items-center gap-2 text-[11px] font-bold text-primary hover:text-primary-dark"
+                          >
+                            <span className="w-3 h-3 shrink-0 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                            {peopleProgress.erasing
+                              ? t('accessLevelPeople.erasingProgress')
+                              : t('accessLevelPeople.addingProgress', { done: peopleProgress.done ?? 0, total: peopleProgress.count })}
+                          </button>
+                        )}
                       </div>
                     </div>
                     {/* Раньше клик по карточке открывал редактирование. Теперь два действия:
@@ -1000,9 +1019,8 @@ export function AccessLevelsPage() {
 
       {/* Пока уровень пишется на устройства: закрыть окно нельзя, чтобы не терять итог. */}
       <Modal
-        isOpen={peopleProgress !== null}
-        onClose={() => { /* закрытие запрещено: идёт запись на устройства */ }}
-        hideClose
+        isOpen={peopleProgress !== null && progressOpen}
+        onClose={() => setProgressOpen(false)}
         title={t(peopleProgress?.kind === 'remove'
           ? 'accessLevelPeople.removingTitle'
           : peopleProgress?.kind === 'repush'
@@ -1030,6 +1048,12 @@ export function AccessLevelsPage() {
               </p>
             )}
           </div>
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="text-[11px] text-text-light">{t('accessLevelPeople.progressBackgroundHint')}</p>
+          <Button type="button" variant="outline" onClick={() => setProgressOpen(false)}>
+            {t('accessLevelPeople.collapse')}
+          </Button>
         </div>
       </Modal>
 
