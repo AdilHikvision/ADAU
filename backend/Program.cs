@@ -2941,9 +2941,16 @@ app.MapDelete("/api/employees/{id:guid}", async (Guid id, AppDbContext dbContext
 
     var employeeNo = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(entity.EmployeeNo) ? entity.EmployeeNo!.Trim() : entity.Id.ToString("N")[..32]);
 
-    // Со всех устройств сразу: параллельно и с отсечкой недоступных по короткой проверке.
+    // Трогаем только устройства из уровней доступа человека: на остальные его не писали.
+    // Уровней нет — устройств тоже, значит просто убираем профиль из базы.
+    var deleteTargets = entity.AccessLevels
+        .Where(a => a.AccessLevel is not null)
+        .SelectMany(a => a.AccessLevel!.Doors)
+        .Select(d => new DevicePersonDeleteTarget(d.DeviceId, employeeNo))
+        .Distinct()
+        .ToList();
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePersonFromAllDevicesAsync(employeeNo, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
@@ -2973,19 +2980,30 @@ app.MapPost("/api/employees/bulk-delete", async (BulkDeletePeopleRequest request
 
     var people = await dbContext.Employees
         .Include(e => e.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .ThenInclude(al => al!.Doors)
         .Include(e => e.Faces)
         .Where(e => ids.Contains(e.Id))
         .ToListAsync(cancellationToken);
     if (people.Count == 0)
         return Results.NotFound();
 
-    var employeeNos = people
-        .Select(p => TruncateEmployeeNo(!string.IsNullOrWhiteSpace(p.EmployeeNo) ? p.EmployeeNo!.Trim() : p.Id.ToString("N")[..32]))
+    // Для каждого — только устройства его уровней доступа; у кого уровней нет,
+    // тот удаляется одной записью в базе.
+    var deleteTargets = people
+        .SelectMany(p =>
+        {
+            var no = TruncateEmployeeNo(!string.IsNullOrWhiteSpace(p.EmployeeNo) ? p.EmployeeNo!.Trim() : p.Id.ToString("N")[..32]);
+            return p.AccessLevels
+                .Where(a => a.AccessLevel is not null)
+                .SelectMany(a => a.AccessLevel!.Doors)
+                .Select(d => new DevicePersonDeleteTarget(d.DeviceId, no));
+        })
         .Distinct()
         .ToList();
 
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromAllDevicesAsync(employeeNos, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add(outcome.EmployeeNo is null
@@ -3321,8 +3339,15 @@ app.MapDelete("/api/visitors/{id:guid}", async (Guid id, AppDbContext dbContext,
         ? entity.DocumentNumber.Trim()
         : entity.Id.ToString("N")[..Math.Min(32, 32)];
 
+    // Как и у работника: только устройства из уровней доступа гостя.
+    var deleteTargets = entity.AccessLevels
+        .Where(a => a.AccessLevel is not null)
+        .SelectMany(a => a.AccessLevel!.Doors)
+        .Select(d => new DevicePersonDeleteTarget(d.DeviceId, employeeNo))
+        .Distinct()
+        .ToList();
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePersonFromAllDevicesAsync(employeeNo, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add($"Устройство \"{outcome.DeviceName}\": {outcome.Result.Message}");
@@ -3351,19 +3376,28 @@ app.MapPost("/api/visitors/bulk-delete", async (BulkDeletePeopleRequest request,
 
     var people = await dbContext.Visitors
         .Include(v => v.AccessLevels)
+        .ThenInclude(a => a.AccessLevel)
+        .ThenInclude(al => al!.Doors)
         .Include(v => v.Faces)
         .Where(v => ids.Contains(v.Id))
         .ToListAsync(cancellationToken);
     if (people.Count == 0)
         return Results.NotFound();
 
-    var employeeNos = people
-        .Select(v => !string.IsNullOrWhiteSpace(v.DocumentNumber) ? v.DocumentNumber.Trim() : v.Id.ToString("N")[..32])
+    var deleteTargets = people
+        .SelectMany(v =>
+        {
+            var no = !string.IsNullOrWhiteSpace(v.DocumentNumber) ? v.DocumentNumber.Trim() : v.Id.ToString("N")[..32];
+            return v.AccessLevels
+                .Where(a => a.AccessLevel is not null)
+                .SelectMany(a => a.AccessLevel!.Doors)
+                .Select(d => new DevicePersonDeleteTarget(d.DeviceId, no));
+        })
         .Distinct()
         .ToList();
 
     var syncWarnings = new List<string>();
-    foreach (var outcome in await syncService.DeletePeopleFromAllDevicesAsync(employeeNos, cancellationToken))
+    foreach (var outcome in await syncService.DeletePeopleFromDevicesAsync(deleteTargets, cancellationToken))
     {
         if (outcome.Result.Success) continue;
         syncWarnings.Add(outcome.EmployeeNo is null

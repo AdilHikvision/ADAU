@@ -175,13 +175,17 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> DeleteFingerprintFromDeviceAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Удаляет пользователя (Person) с устройства по employeeNo.</summary>
     Task<DeviceSyncResult> DeletePersonFromDeviceAsync(string employeeNo, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Снимает пользователя со всех устройств сразу: запросы идут параллельно,
-    /// а недоступные устройства отсекаются короткой проверкой (см. реализацию).</summary>
-    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePersonFromAllDevicesAsync(string employeeNo, CancellationToken cancellationToken = default);
-    /// <summary>Снимает сразу нескольких людей со всех устройств: связь с устройством
-    /// проверяется один раз, а не на каждого человека.</summary>
-    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromAllDevicesAsync(IReadOnlyCollection<string> employeeNos, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Снимает людей с названных устройств: запросы к устройствам идут параллельно,
+    /// связь с каждым проверяется один раз, а не на каждого человека. Список целей
+    /// собирает вызывающий код из уровней доступа — на остальные устройства человека
+    /// никогда не записывали, и обращаться к ним незачем.
+    /// </summary>
+    Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Кого и с какого устройства снять.</summary>
+public sealed record DevicePersonDeleteTarget(Guid DeviceId, string EmployeeNo);
 
 /// <summary>Итог удаления человека с одного устройства — имя нужно для предупреждения в UI.</summary>
 public sealed record DevicePersonDeleteOutcome(Guid DeviceId, string DeviceName, DeviceSyncResult Result, string? EmployeeNo = null);

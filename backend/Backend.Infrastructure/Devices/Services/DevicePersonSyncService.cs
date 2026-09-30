@@ -667,15 +667,25 @@ public sealed class DevicePersonSyncService(
     }
 
     /// <summary>
-    /// Снимает человека со всех устройств. Устройства обрабатываются параллельно: у удаления
-    /// длинная лестница форматов (13 запросов, каждый по всем портам с 30-секундным таймаутом),
-    /// поэтому последовательный обход с недоступным устройством растягивался на десятки минут —
-    /// в UI это выглядело как зависшее удаление профиля.
+    /// Снимает людей с названных устройств. Устройства обрабатываются параллельно, и связь
+    /// с каждым проверяется один раз: у удаления длинная лестница форматов (13 запросов,
+    /// каждый по всем портам с 30-секундным таймаутом), поэтому недоступное устройство
+    /// иначе растягивало бы удаление на десятки минут. Какие устройства трогать, решает
+    /// вызывающий код по уровням доступа человека.
     /// </summary>
-    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePersonFromAllDevicesAsync(string employeeNo, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromDevicesAsync(IReadOnlyCollection<DevicePersonDeleteTarget> targets, CancellationToken cancellationToken = default)
     {
-        // Список читаем заранее: внутри параллельных задач к dbContext обращаться нельзя.
-        var devices = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
+        if (targets.Count == 0) return [];
+
+        var byDevice = targets
+            .GroupBy(t => t.DeviceId)
+            .ToDictionary(g => g.Key, g => g.Select(t => t.EmployeeNo).Distinct(StringComparer.Ordinal).ToList());
+
+        // Устройства читаем заранее: внутри параллельных задач к dbContext обращаться нельзя.
+        var deviceIds = byDevice.Keys.ToList();
+        var devices = await dbContext.Devices.AsNoTracking()
+            .Where(d => deviceIds.Contains(d.Id))
+            .ToListAsync(cancellationToken);
         var outcomes = new ConcurrentBag<DevicePersonDeleteOutcome>();
 
         await Parallel.ForEachAsync(
@@ -683,30 +693,7 @@ public sealed class DevicePersonSyncService(
             new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
             async (device, token) =>
             {
-                var result = await DeletePersonFromDeviceCoreAsync(employeeNo, device, token);
-                outcomes.Add(new DevicePersonDeleteOutcome(device.Id, device.Name, result));
-            });
-
-        return outcomes.OrderBy(o => o.DeviceName, StringComparer.CurrentCulture).ToList();
-    }
-
-    /// <summary>
-    /// Снимает сразу нескольких людей со всех устройств. Связь с устройством проверяется
-    /// один раз, а не на каждого человека, поэтому массовое удаление не умножает таймауты
-    /// недоступных устройств на количество профилей.
-    /// </summary>
-    public async Task<IReadOnlyList<DevicePersonDeleteOutcome>> DeletePeopleFromAllDevicesAsync(IReadOnlyCollection<string> employeeNos, CancellationToken cancellationToken = default)
-    {
-        if (employeeNos.Count == 0) return [];
-
-        var devices = await dbContext.Devices.AsNoTracking().ToListAsync(cancellationToken);
-        var outcomes = new ConcurrentBag<DevicePersonDeleteOutcome>();
-
-        await Parallel.ForEachAsync(
-            devices,
-            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = cancellationToken },
-            async (device, token) =>
-            {
+                var people = byDevice[device.Id];
                 var alive = await IsDeviceAnsweringAsync(device, token);
                 if (!alive.Answering)
                 {
@@ -718,7 +705,7 @@ public sealed class DevicePersonSyncService(
                 }
 
                 var client = CreateClient(device);
-                foreach (var employeeNo in employeeNos)
+                foreach (var employeeNo in people)
                 {
                     var result = await DeletePersonLadderAsync(employeeNo, client, token);
                     if (!result.Success)
