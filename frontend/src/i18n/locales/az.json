@@ -3332,6 +3332,8 @@
     "clear": "Təmizlə"
   },
   "accessLevelPeople": {
+    "syncIncomplete": "Qurğulara yazma tamamlanmadı: {{done}} / {{total}} — qurğu jurnalını yoxlayın.",
+    "addingProgress": "Yazılıb: {{done}} / {{total}}",
     "structureHousing": "Universitet strukturu",
     "structureCompany": "Şirkət strukturu",
     "title": "«{{name}}» səviyyəsindəki insanlar",

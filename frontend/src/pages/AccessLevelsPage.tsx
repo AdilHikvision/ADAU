@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
 import { AppLayout } from '../components/templates'
@@ -6,8 +7,9 @@ import { Badge, Button, Input } from '../components/atoms'
 import { PageHeader, Modal, PeoplePicker, type PickerGroup, type PickerPerson } from '../components/organisms'
 import { useLoading } from '../context/LoadingContext'
 import { useModule } from '../context/ModuleContext'
-import { apiRequest } from '../lib/api'
+import { apiRequest, getHubUrl } from '../lib/api'
 import { loadHousingBlocks } from './housingBlocks'
+import { newId } from '../lib/id'
 
 interface AccessLevelDoor {
   deviceId: string
@@ -176,7 +178,7 @@ export function AccessLevelsPage() {
   const [blocks, setBlocks] = useState<PickerGroup[]>([])
   // Запись на устройства идёт не мгновенно: пока она длится, показываем окно
   // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
-  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove'; count: number; name?: string } | null>(null)
+  const [peopleProgress, setPeopleProgress] = useState<{ kind: 'assign' | 'remove'; count: number; name?: string; done?: number; device?: string } | null>(null)
   const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove'; added: number; alreadyAssigned: number; name?: string; warnings: string[] } | null>(null)
   const assignSaving = peopleProgress !== null
 
@@ -239,22 +241,90 @@ export function AccessLevelsPage() {
     }
   }
 
+  /**
+   * Ждёт, пока сервер допишет людей на устройства. Запись идёт в фоне и докладывает о себе
+   * событиями PersonSyncProgress: на каждого человека приходит своё «complete», поэтому
+   * считаем их. Если события перестали приходить, выходим по тишине — лучше показать итог
+   * с оговоркой, чем держать окно вечно.
+   */
+  async function waitForDeviceSync(syncId: string, people: number, silenceMs = 120000) {
+    const warnings: string[] = []
+    const hub = new HubConnectionBuilder()
+      .withUrl(`${getHubUrl()}/hubs/devices`, {
+        accessTokenFactory: () => token!,
+        skipNegotiation: true,
+        transport: HttpTransportType.WebSockets,
+      })
+      .configureLogging(LogLevel.Error)
+      .build()
+
+    let done = 0
+    let finished = false
+    try {
+      await new Promise<void>((resolve) => {
+        let silence: ReturnType<typeof setTimeout>
+        const stop = () => { if (!finished) { finished = true; clearTimeout(silence); resolve() } }
+        const restartSilence = () => {
+          clearTimeout(silence)
+          silence = setTimeout(stop, silenceMs)
+        }
+
+        hub.on('PersonSyncProgress', (evt: { syncId: string; stage: string; deviceName?: string; message?: string | null }) => {
+          if (!evt || evt.syncId !== syncId) return
+          restartSilence()
+          if (evt.stage === 'skipped' || evt.stage === 'error') {
+            const text = evt.deviceName ? `${evt.deviceName}: ${evt.message ?? evt.stage}` : (evt.message ?? evt.stage)
+            if (!warnings.includes(text)) warnings.push(text)
+          }
+          if (evt.stage === 'complete') {
+            done += 1
+            setPeopleProgress((prev) => (prev ? { ...prev, done, device: '' } : prev))
+            if (done >= people) stop()
+            return
+          }
+          setPeopleProgress((prev) => (prev ? { ...prev, done, device: evt.deviceName ?? undefined } : prev))
+        })
+
+        restartSilence()
+        hub.start().catch(() => stop())
+      })
+    } finally {
+      await hub.stop().catch(() => undefined)
+    }
+    return { warnings, done }
+  }
+
   async function assignPeople(personIds: string[]) {
     if (!token || !peopleItem || personIds.length === 0) return
-    setPeopleProgress({ kind: 'assign', count: personIds.length })
+    // syncId придумывает клиент: подписка должна начаться раньше, чем сервер зашлёт
+    // первые события, иначе часть прогресса пройдёт мимо окна.
+    const syncId = newId('sync').replace(/-/g, '')
+    setPeopleProgress({ kind: 'assign', count: personIds.length, done: 0 })
     setPeopleError(null)
     try {
-      const res = await apiRequest<{ added: number; alreadyAssigned: number; warnings: string[] }>(
+      const res = await apiRequest<{ added: number; alreadyAssigned: number; syncId?: string; warnings?: string[] }>(
         `/api/access-levels/${peopleItem.id}/people`,
-        { method: 'POST', token, body: JSON.stringify({ personIds }) },
+        { method: 'POST', token, body: JSON.stringify({ personIds, syncId }) },
       )
+      const added = res.added ?? 0
+      const synced = added > 0
+        ? await waitForDeviceSync(res.syncId ?? syncId, added)
+        : { warnings: [] as string[], done: 0 }
       await loadLevelPeople(peopleItem.id)
       await loadData()
       setPeopleResult({
         kind: 'assign',
-        added: res.added ?? 0,
+        added,
         alreadyAssigned: res.alreadyAssigned ?? 0,
-        warnings: res.warnings ?? [],
+        // Если фоновая запись не доложила обо всех, честно пишем это в итог:
+        // уровень в базе стоит, но на турникете он может ещё не появиться.
+        warnings: [
+          ...(res.warnings ?? []),
+          ...synced.warnings,
+          ...(added > synced.done
+            ? [t('accessLevelPeople.syncIncomplete', { done: synced.done, total: added })]
+            : []),
+        ],
       })
     } catch (e) {
       setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
@@ -804,11 +874,19 @@ export function AccessLevelsPage() {
       >
         <div className="flex items-center gap-4 py-2">
           <div className="w-10 h-10 shrink-0 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
-          <p className="text-sm font-bold text-text-dark">
-            {peopleProgress?.kind === 'remove'
-              ? t('accessLevelPeople.removingBody', { name: peopleProgress?.name ?? '' })
-              : t('accessLevelPeople.addingBody', { count: peopleProgress?.count ?? 0 })}
-          </p>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-text-dark">
+              {peopleProgress?.kind === 'remove'
+                ? t('accessLevelPeople.removingBody', { name: peopleProgress?.name ?? '' })
+                : t('accessLevelPeople.addingBody', { count: peopleProgress?.count ?? 0 })}
+            </p>
+            {peopleProgress?.kind === 'assign' && peopleProgress.done !== undefined && (
+              <p className="mt-1 text-xs text-text-light truncate">
+                {t('accessLevelPeople.addingProgress', { done: peopleProgress.done, total: peopleProgress.count })}
+                {peopleProgress.device ? ` · ${peopleProgress.device}` : ''}
+              </p>
+            )}
+          </div>
         </div>
       </Modal>
 

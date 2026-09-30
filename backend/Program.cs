@@ -1730,6 +1730,8 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     IDeviceConnectionManager connectionManager,
     IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster activityBroadcaster,
+    IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
@@ -1750,10 +1752,42 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     if (toAdd.Count > 0)
         await dbContext.SaveChangesAsync(cancellationToken);
 
-    var warnings = await SyncAccessLevelPeopleAsync(
-        toAdd, dbContext, syncService, connectionManager, arpStatusService, activityBroadcaster, logger, cancellationToken);
+    // Запись на устройства для десятков людей идёт минутами: держать на ней HTTP-запрос
+    // нельзя — прокси обрывал его по таймауту (504), и часть людей оставалась без доступа
+    // на турникете, хотя в базе уровень уже стоял. Поэтому отвечаем сразу, а запись идёт
+    // в фоне со своим скоупом и докладывает о себе событиями PersonSyncProgress.
+    var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    if (toAdd.Count > 0)
+    {
+        var peopleToSync = toAdd.ToList();
+        _ = Task.Run(async () =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var sp = scope.ServiceProvider;
+            var backgroundLogger = sp.GetRequiredService<ILogger<Program>>();
+            try
+            {
+                await SyncAccessLevelPeopleAsync(
+                    syncId,
+                    peopleToSync,
+                    sp.GetRequiredService<AppDbContext>(),
+                    sp.GetRequiredService<IDevicePersonSyncService>(),
+                    sp.GetRequiredService<IDeviceConnectionManager>(),
+                    sp.GetRequiredService<IDeviceArpStatusService>(),
+                    sp.GetRequiredService<IDeviceActivityBroadcaster>(),
+                    backgroundLogger,
+                    appLifetime.ApplicationStopping);
+            }
+            catch (Exception ex)
+            {
+                backgroundLogger.LogError(ex,
+                    "Access level {LevelId}: background sync of {Count} people failed", id, peopleToSync.Count);
+            }
+        }, CancellationToken.None);
+    }
 
-    return Results.Ok(new { added = toAdd.Count, alreadyAssigned = existing.Count, warnings });
+    // warnings оставлены для старых клиентов: теперь предупреждения приходят событиями.
+    return Results.Ok(new { added = toAdd.Count, alreadyAssigned = existing.Count, syncId, warnings = Array.Empty<string>() });
 }).RequireAuthorization("AccessLevels.Manage");
 
 // Снять уровень с человека и обновить его доступ на устройствах.
@@ -1775,8 +1809,10 @@ app.MapDelete("/api/access-levels/{id:guid}/people/{personId:guid}", async (
     dbContext.EmployeeAccessLevels.Remove(link);
     await dbContext.SaveChangesAsync(cancellationToken);
 
+    // Один человек — это секунды, ждём в запросе и отдаём предупреждения сразу.
     var warnings = await SyncAccessLevelPeopleAsync(
-        [personId], dbContext, syncService, connectionManager, arpStatusService, activityBroadcaster, logger, cancellationToken);
+        Guid.NewGuid().ToString("N"), [personId], dbContext, syncService, connectionManager, arpStatusService,
+        activityBroadcaster, logger, cancellationToken);
 
     return Results.Ok(new { removed = 1, warnings });
 }).RequireAuthorization("AccessLevels.Manage");
@@ -11154,6 +11190,7 @@ app.Run();
 /// отобрало бы доступ, выданный другими.
 /// </summary>
 static async Task<List<string>> SyncAccessLevelPeopleAsync(
+    string syncId,
     IReadOnlyCollection<Guid> personIds,
     AppDbContext dbContext,
     IDevicePersonSyncService syncService,
@@ -11191,8 +11228,9 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
         var fingerprints = await dbContext.Fingerprints.Where(f => f.EmployeeId == personId).ToListAsync(cancellationToken);
         var cards = await dbContext.Cards.Where(c => c.EmployeeId == personId).ToListAsync(cancellationToken);
 
+        // Один syncId на всю пачку: клиент считает по событиям, сколько людей уже готово.
         var personWarnings = await SyncPersonToDevicesWithProgressAsync(
-            Guid.NewGuid().ToString("N"),
+            syncId,
             personId,
             isEmployee: true,
             deviceIds,
@@ -11778,7 +11816,9 @@ public sealed record AccessLevelResponse(Guid Id, string Name, string? Descripti
 public sealed record AccessLevelPersonResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string Kind, string? DepartmentName, string? HousingBlockName);
 
 /// <summary>Назначение уровня сразу нескольким людям со страницы уровней доступа.</summary>
-public sealed record AssignAccessLevelPeopleRequest(Guid[] PersonIds);
+/// <summary>SyncId задаёт клиент, чтобы подписаться на события записи на устройства
+/// до отправки запроса и не пропустить первые из них.</summary>
+public sealed record AssignAccessLevelPeopleRequest(Guid[] PersonIds, string? SyncId = null);
 
 public sealed record SystemStatusResponse(
     string ServerStatus,
