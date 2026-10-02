@@ -2812,6 +2812,7 @@
     "assignStatusNone": "Növbəsiz",
     "assignStatusOther": "Başqa növbədə",
     "assignBadgeThis": "Təyin edilib",
+    "assignLockedHint": "«{{name}}» növbəsinə təyin edilib. Köçürmək üçün əvvəlcə oradan çıxarın.",
     "assignClearSelection": "Sıfırla",
     "assignSelectShown": "Göstərilənləri seç ({{count}})",
     "removeSchedule": "Cədvəli sil",

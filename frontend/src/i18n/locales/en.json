@@ -2820,6 +2820,7 @@
     "assignStatusNone": "No shift",
     "assignStatusOther": "On other",
     "assignBadgeThis": "Assigned",
+    "assignLockedHint": "Assigned to \"{{name}}\". Remove them from that shift first to move them.",
     "assignClearSelection": "Clear",
     "assignSelectShown": "Select shown ({{count}})",
     "removeSchedule": "Remove schedule",

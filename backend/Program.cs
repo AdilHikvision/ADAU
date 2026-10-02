@@ -4311,21 +4311,36 @@ app.MapGet("/api/work-schedules/{id:guid}/assignment", async (Guid id, string? k
     // Только люди выбранного типа (сотрудники/студенты): окно назначения показывает
     // один тип, и чужие id в выборке при сохранении перезаписали бы скрытых людей.
     var personKind = AttendanceKind(kind);
+    var today = DateOnly.FromDateTime(DateTime.Now);
 
-    // Employees assigned via default WorkScheduleId
-    var empWithDefault = await dbContext.Employees.AsNoTracking()
-        .Where(e => e.Kind == personKind && e.IsActive && e.WorkScheduleId == id)
-        .Select(e => e.Id)
+    // Смена человека — его смена по умолчанию плюс дни, расписанные с сегодняшнего.
+    // Прошлые дни — история: переведённый на другую смену не числится на старой.
+    var defaults = await dbContext.Employees.AsNoTracking()
+        .Where(e => e.Kind == personKind && e.IsActive && e.WorkScheduleId != null)
+        .Select(e => new { e.Id, ScheduleId = e.WorkScheduleId!.Value })
+        .ToListAsync(cancellationToken);
+    var upcoming = await dbContext.EmployeeDayPatterns.AsNoTracking()
+        .Where(p => p.WorkScheduleId != null && p.Date >= today && p.Employee.Kind == personKind && p.Employee.IsActive)
+        .Select(p => new { p.EmployeeId, ScheduleId = p.WorkScheduleId!.Value, p.Date })
         .ToListAsync(cancellationToken);
 
-    // Day patterns for this schedule
+    var allEmpIds = defaults.Where(d => d.ScheduleId == id).Select(d => d.Id)
+        .Union(upcoming.Where(p => p.ScheduleId == id).Select(p => p.EmployeeId))
+        .ToHashSet();
+
+    // Кто стоит на другой смене: окно показывает их цветом той смены и не даёт назначить.
+    var otherAssignments = defaults.Where(d => d.ScheduleId != id).Select(d => new { employeeId = d.Id, scheduleId = d.ScheduleId })
+        .Concat(upcoming.Where(p => p.ScheduleId != id).OrderBy(p => p.Date).Select(p => new { employeeId = p.EmployeeId, scheduleId = p.ScheduleId }))
+        .Where(o => !allEmpIds.Contains(o.employeeId))
+        .DistinctBy(o => o.employeeId)
+        .ToList();
+
+    // Диапазон дат и дни недели — по дням тех, кто сейчас на этой смене.
     var patterns = await dbContext.EmployeeDayPatterns.AsNoTracking()
         .Where(p => p.WorkScheduleId == id && p.Employee.Kind == personKind)
         .Select(p => new { p.EmployeeId, p.Date })
         .ToListAsync(cancellationToken);
-
-    var empWithPatterns = patterns.Select(p => p.EmployeeId).Distinct().ToList();
-    var allEmpIds = empWithDefault.Union(empWithPatterns).Distinct().ToList();
+    patterns = patterns.Where(p => allEmpIds.Contains(p.EmployeeId)).ToList();
 
     DateOnly? fromDate = patterns.Count > 0 ? patterns.Min(p => p.Date) : null;
     DateOnly? toDate   = patterns.Count > 0 ? patterns.Max(p => p.Date) : null;
@@ -4340,6 +4355,7 @@ app.MapGet("/api/work-schedules/{id:guid}/assignment", async (Guid id, string? k
     return Results.Ok(new
     {
         employeeIds = allEmpIds,
+        otherAssignments,
         fromDate = fromDate?.ToString("yyyy-MM-dd"),
         toDate   = toDate?.ToString("yyyy-MM-dd"),
         daysOfWeek,

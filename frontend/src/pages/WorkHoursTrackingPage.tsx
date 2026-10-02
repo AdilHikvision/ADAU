@@ -836,7 +836,8 @@ export function WorkHoursTrackingPage() {
 
   // ── Quick Assign ──────────────────────────────────────────────────────────
   const [assignSchedule, setAssignSchedule] = useState<WorkScheduleRow | null>(null)
-  const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string; deptId: string | null; scheduleId: string | null }[]>([])
+  // otherScheduleId — человек стоит на другой смене: его видно, но назначить нельзя.
+  const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string; deptId: string | null; otherScheduleId: string | null }[]>([])
   const [assignSelEmps, setAssignSelEmps] = useState<Set<string>>(new Set())
   // Кто уже стоит на этой смене (по умолчанию или днями) — по нему фильтр статуса и режим снятия.
   const [assignCurrent, setAssignCurrent] = useState<Set<string>>(new Set())
@@ -1189,7 +1190,10 @@ useEffect(() => {
         id: string; firstName: string; lastName: string; department?: { id: string; name: string } | null
         housingBlockId?: string | null; housingBlockName?: string | null; workScheduleId?: string | null
       }
-      type AssignmentState = { employeeIds: string[]; fromDate: string | null; toDate: string | null; daysOfWeek: number[] }
+      type AssignmentState = {
+        employeeIds: string[]; otherAssignments?: { employeeId: string; scheduleId: string }[]
+        fromDate: string | null; toDate: string | null; daysOfWeek: number[]
+      }
 
       // График назначаем людям выбранного типа: студентам он нужен, чтобы попасть в отчёт.
       const [empData, state] = await Promise.all([
@@ -1198,11 +1202,13 @@ useEffect(() => {
       ])
 
       // Группа в окне — та же, что в фильтрах страницы: факультет у студента, отдел у сотрудника.
+      // Чужая смена — от сервера: он учитывает и смену, расписанную только по дням.
+      const otherById = new Map((state.otherAssignments ?? []).map(o => [o.employeeId, o.scheduleId]))
       setAssignEmps(empData.map(e => ({
         id: e.id, name: `${e.firstName} ${e.lastName}`,
         dept: (students ? e.housingBlockName : e.department?.name) ?? '',
         deptId: (students ? e.housingBlockId : e.department?.id) ?? null,
-        scheduleId: e.workScheduleId ?? null,
+        otherScheduleId: otherById.get(e.id) ?? null,
       })))
       setAssignSelEmps(new Set(state.employeeIds))
       setAssignCurrent(new Set(state.employeeIds))
@@ -1238,7 +1244,9 @@ useEffect(() => {
   async function doAssign() {
     // Снятие касается только тех, кто стоит на этой смене: bulk-schedule с null очищает
     // человеку все дни, и отмеченный сотрудник с другой сменой потерял бы её.
-    const empIds = [...assignSelEmps].filter(id => !assignRemoveMode || assignCurrent.has(id))
+    // Назначение — только тем, у кого другой смены нет.
+    const locked = new Set(assignEmps.filter(e => e.otherScheduleId).map(e => e.id))
+    const empIds = [...assignSelEmps].filter(id => assignRemoveMode ? assignCurrent.has(id) : !locked.has(id))
     if (!token || !assignSchedule || empIds.length === 0) return
     if (!assignRemoveMode && assignSelDows.size === 0) return
     setAssignSaving(true)
@@ -2857,7 +2865,7 @@ useEffect(() => {
         ]
         // Статус сотрудника относительно этой смены.
         const statusOf = (e: typeof assignEmps[number]): 'this' | 'none' | 'other' =>
-          assignCurrent.has(e.id) ? 'this' : e.scheduleId ? 'other' : 'none'
+          assignCurrent.has(e.id) ? 'this' : e.otherScheduleId ? 'other' : 'none'
         const scheduleById = new Map(schedules.map(s => [s.id, s]))
 
         // Группа — отдел у сотрудников, факультет у студентов (то же дерево, что в фильтрах страницы).
@@ -2888,10 +2896,12 @@ useEffect(() => {
           (assignRemoveMode || assignStatus === 'all' || statusOf(e) === assignStatus) &&
           (!q || e.name.toLowerCase().includes(q) || e.dept.toLowerCase().includes(q))
         )
-        const allSelected = filtered.length > 0 && filtered.every(e => assignSelEmps.has(e.id))
-        const effectiveSel = assignRemoveMode
-          ? [...assignSelEmps].filter(id => assignCurrent.has(id)).length
-          : assignSelEmps.size
+        // Стоящих на другой смене не выбрать: ни галочкой, ни «выбрать всех», ни отделом.
+        const selectable = filtered.filter(e => statusOf(e) !== 'other')
+        const allSelected = selectable.length > 0 && selectable.every(e => assignSelEmps.has(e.id))
+        const effectiveSel = [...assignSelEmps].filter(id => assignRemoveMode
+          ? assignCurrent.has(id)
+          : !assignEmps.some(e => e.id === id && e.otherScheduleId)).length
 
         // Отделы в порядке дерева, «без отдела» — в конце. Те же строки рисует фильтр отделов.
         const deptRows: { id: string; name: string; depth: number }[] = []
@@ -2930,7 +2940,7 @@ useEffect(() => {
             ids.forEach(id => { if (on) n.add(id); else n.delete(id) })
             return n
           })
-        const toggleAll = () => toggleMany(filtered.map(e => e.id), !allSelected)
+        const toggleAll = () => toggleMany(selectable.map(e => e.id), !allSelected)
         const toggleDeptFilter = (id: string) =>
           setAssignDeptIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
         const deptQuery = assignDeptSearch.trim().toLowerCase()
@@ -3006,9 +3016,9 @@ useEffect(() => {
                             {t('workHours.assignClearSelection')}
                           </button>
                         )}
-                        <button onClick={toggleAll} disabled={filtered.length === 0}
+                        <button onClick={toggleAll} disabled={selectable.length === 0}
                           className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline disabled:opacity-40">
-                          {allSelected ? t('workHours.deselectAll') : t('workHours.assignSelectShown', { count: filtered.length })}
+                          {allSelected ? t('workHours.deselectAll') : t('workHours.assignSelectShown', { count: selectable.length })}
                         </button>
                       </div>
                     </div>
@@ -3080,24 +3090,41 @@ useEffect(() => {
                     ) : filtered.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-text-muted text-sm">{t('workHours.noEmployeesMatch')}</div>
                     ) : groupsList.map(g => {
-                      const ids = g.emps.map(e => e.id)
+                      const ids = g.emps.filter(e => statusOf(e) !== 'other').map(e => e.id)
                       const selCount = ids.filter(id => assignSelEmps.has(id)).length
-                      const all = selCount === ids.length
+                      const all = ids.length > 0 && selCount === ids.length
                       return (
                         <div key={g.key}>
-                          {/* Отметка у отдела выбирает всех его сотрудников из текущего списка */}
-                          <label className="sticky top-0 z-10 flex items-center gap-3 px-4 py-2 bg-surface/95 backdrop-blur border-b border-black/[0.06] cursor-pointer">
-                            <input type="checkbox" checked={all}
+                          {/* Отметка у отдела выбирает всех его сотрудников из текущего списка, кроме стоящих на другой смене */}
+                          <label className={`sticky top-0 z-10 flex items-center gap-3 px-4 py-2 bg-surface/95 backdrop-blur border-b border-black/[0.06] ${ids.length > 0 ? 'cursor-pointer' : ''}`}>
+                            <input type="checkbox" checked={all} disabled={ids.length === 0}
                               ref={el => { if (el) el.indeterminate = selCount > 0 && !all }}
                               onChange={() => toggleMany(ids, !all)}
-                              className="w-4 h-4 rounded accent-primary shrink-0" />
+                              className="w-4 h-4 rounded accent-primary shrink-0 disabled:opacity-40" />
                             <span className="flex-1 min-w-0 text-[11px] font-black uppercase tracking-wider text-text-dark truncate">{g.name}</span>
                             <span className="text-[10px] font-black text-text-muted shrink-0">{selCount}/{ids.length}</span>
                           </label>
                           {g.emps.map(e => {
                             const sel = assignSelEmps.has(e.id)
                             const st = statusOf(e)
-                            const other = st === 'other' ? scheduleById.get(e.scheduleId!) : undefined
+                            if (st === 'other') {
+                              // Стоит на другой смене: строка в цвете той смены, назначить нельзя.
+                              const other = scheduleById.get(e.otherScheduleId!)
+                              const color = other?.color ?? '#94a3b8'
+                              return (
+                                <div key={e.id}
+                                  title={t('workHours.assignLockedHint', { name: other?.name ?? '' })}
+                                  className="flex items-center gap-3 pl-8 pr-4 py-2 border-b border-black/[0.04] cursor-not-allowed"
+                                  style={{ backgroundColor: color + '14', boxShadow: `inset 3px 0 0 ${color}` }}>
+                                  <span className="material-symbols-outlined text-[16px] shrink-0" style={{ color }}>lock</span>
+                                  <p className="flex-1 min-w-0 text-sm font-bold truncate text-text-muted">{e.name}</p>
+                                  <span className="shrink-0 max-w-[140px] truncate text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: color + '22', color }}>
+                                    {other?.name ?? t('workHours.assignStatusOther')}
+                                  </span>
+                                </div>
+                              )
+                            }
                             return (
                               <label key={e.id}
                                 className={`flex items-center gap-3 pl-8 pr-4 py-2 cursor-pointer transition-colors border-b border-black/[0.04]
@@ -3109,12 +3136,6 @@ useEffect(() => {
                                   <span className="shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
                                     style={{ backgroundColor: assignSchedule.color + '22', color: assignSchedule.color }}>
                                     {t('workHours.assignBadgeThis')}
-                                  </span>
-                                )}
-                                {other && (
-                                  <span className="shrink-0 max-w-[120px] flex items-center gap-1 text-[10px] font-bold text-text-muted truncate" title={other.name}>
-                                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: other.color }} />
-                                    <span className="truncate">{other.name}</span>
                                   </span>
                                 )}
                               </label>

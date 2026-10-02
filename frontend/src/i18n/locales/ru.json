@@ -2835,6 +2835,7 @@
     "assignStatusNone": "Без смены",
     "assignStatusOther": "На другой",
     "assignBadgeThis": "Назначена",
+    "assignLockedHint": "Назначен на смену «{{name}}». Чтобы перевести, сначала снимите его с неё.",
     "assignClearSelection": "Сбросить",
     "assignSelectShown": "Выбрать показанных ({{count}})",
     "removeSchedule": "Удалить график",
