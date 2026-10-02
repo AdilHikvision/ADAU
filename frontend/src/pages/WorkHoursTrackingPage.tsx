@@ -396,6 +396,12 @@ function inputTimeToApi(value: string): string | null {
   return value.length === 5 ? `${value}:00` : value
 }
 
+/** Локальная календарная дата YYYY-MM-DD. toISOString не годится: он переводит в UTC,
+ *  и в UTC+4 полночь 1-го числа становится последним днём прошлого месяца. */
+function localYmd(x: Date = new Date()): string {
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
+}
+
 /** Понедельник недели, содержащей дату (YYYY-MM-DD → YYYY-MM-DD). */
 function weekRange(anchor: string): { from: string; to: string } {
   const d = new Date(anchor + 'T00:00:00')
@@ -403,17 +409,13 @@ function weekRange(anchor: string): { from: string; to: string } {
   const diffToMon = (dow + 6) % 7 // Mon=0
   const mon = new Date(d); mon.setDate(d.getDate() - diffToMon)
   const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
-  const fmt = (x: Date) => x.toISOString().slice(0, 10)
-  return { from: fmt(mon), to: fmt(sun) }
+  return { from: localYmd(mon), to: localYmd(sun) }
 }
 
 /** Первый и последний день месяца YYYY-MM. */
 function monthRange(yyyymm: string): { from: string; to: string } {
   const [y, m] = yyyymm.split('-').map(Number)
-  const first = new Date(y, m - 1, 1)
-  const last = new Date(y, m, 0)
-  const fmt = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
-  return { from: fmt(first), to: fmt(last) }
+  return { from: localYmd(new Date(y, m - 1, 1)), to: localYmd(new Date(y, m, 0)) }
 }
 
 /**
@@ -717,14 +719,14 @@ export function WorkHoursTrackingPage() {
         clear: 'workHours.clearDepts', remove: 'workHours.removeDept', pickTitle: 'workHours.pickEmployeeTitle',
       }
   const [filterFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10)
+    const d = new Date(); d.setDate(d.getDate() - 7); return localYmd(d)
   })
-  const [filterTo] = useState(() => new Date().toISOString().slice(0, 10))
+  const [filterTo] = useState(() => localYmd())
   // Daily-вкладка работает с одной датой (день, за который смотрим отчёт).
-  const [filterDailyDate, setFilterDailyDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [filterDailyDate, setFilterDailyDate] = useState(() => localYmd())
   // Weekly/Monthly — anchor-даты, диапазон вычисляется автоматически.
-  const [weeklyAnchor, setWeeklyAnchor] = useState(() => new Date().toISOString().slice(0, 10))
-  const [monthlyAnchor, setMonthlyAnchor] = useState(() => new Date().toISOString().slice(0, 7)) // YYYY-MM
+  const [weeklyAnchor, setWeeklyAnchor] = useState(() => localYmd())
+  const [monthlyAnchor, setMonthlyAnchor] = useState(() => localYmd().slice(0, 7)) // YYYY-MM
 
   // Модалка коррекции check-in/check-out для конкретного сотрудника на конкретный день.
   const [correctionModal, setCorrectionModal] = useState<DailySummary | null>(null)
@@ -787,8 +789,8 @@ export function WorkHoursTrackingPage() {
     employeeId: '',
     leaveType: 'Vacation',
     isPaid: true,
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+    startDate: localYmd(),
+    endDate: localYmd(),
     reason: '',
   })
 
@@ -1039,8 +1041,10 @@ useEffect(() => {
     try {
       const range = tab === 'weekly' ? weekRange(weeklyAnchor) : monthRange(monthlyAnchor)
       const params = new URLSearchParams(peopleFilterQuery)
-      params.set('from', new Date(range.from + 'T00:00:00').toISOString())
-      params.set('to', new Date(range.to + 'T00:00:00').toISOString())
+      // Сервер берёт из параметра UTC-дату, поэтому шлём полночь UTC календарного дня —
+      // как и дневной отчёт. Локальная полночь в UTC+4 сдвигала месяц на день назад.
+      params.set('from', `${range.from}T00:00:00Z`)
+      params.set('to', `${range.to}T00:00:00Z`)
       const data = await apiRequest<PeriodRow[]>(`/api/attendance/period?${params}`, authOpts)
       setPeriod(data)
     } finally {
@@ -1319,7 +1323,7 @@ useEffect(() => {
       }
       setLeaveModal(null)
       setEditingLeaveId(null)
-      setLeaveForm({ employeeId: '', leaveType: 'Vacation', isPaid: true, startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10), reason: '' })
+      setLeaveForm({ employeeId: '', leaveType: 'Vacation', isPaid: true, startDate: localYmd(), endDate: localYmd(), reason: '' })
       await loadLeaves()
     } finally {
       setLeaveSaving(false)
