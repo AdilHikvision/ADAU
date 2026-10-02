@@ -836,8 +836,14 @@ export function WorkHoursTrackingPage() {
 
   // ── Quick Assign ──────────────────────────────────────────────────────────
   const [assignSchedule, setAssignSchedule] = useState<WorkScheduleRow | null>(null)
-  const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string }[]>([])
+  const [assignEmps, setAssignEmps] = useState<{ id: string; name: string; dept: string; deptId: string | null; scheduleId: string | null }[]>([])
   const [assignSelEmps, setAssignSelEmps] = useState<Set<string>>(new Set())
+  // Кто уже стоит на этой смене (по умолчанию или днями) — по нему фильтр статуса и режим снятия.
+  const [assignCurrent, setAssignCurrent] = useState<Set<string>>(new Set())
+  const [assignDeptIds, setAssignDeptIds] = useState<Set<string>>(new Set())
+  const [assignDeptOpen, setAssignDeptOpen] = useState(false)
+  const [assignDeptSearch, setAssignDeptSearch] = useState('')
+  const [assignStatus, setAssignStatus] = useState<'all' | 'this' | 'none' | 'other'>('all')
   const [assignSelDows, setAssignSelDows] = useState<Set<number>>(new Set([1, 2, 3, 4, 5]))
   const [assignFrom, setAssignFrom] = useState('')
   const [assignTo, setAssignTo] = useState('')
@@ -1173,8 +1179,16 @@ useEffect(() => {
     setAssignSearch('')
     setAssignError(null)
     setAssignRemoveMode(false)
+    setAssignStatus('all')
+    setAssignDeptIds(new Set())
+    setAssignDeptOpen(false)
+    setAssignDeptSearch('')
+    setAssignCurrent(new Set())
     try {
-      type EmpItem = { id: string; firstName: string; lastName: string; department?: { name: string } | null; housingBlockName?: string | null }
+      type EmpItem = {
+        id: string; firstName: string; lastName: string; department?: { id: string; name: string } | null
+        housingBlockId?: string | null; housingBlockName?: string | null; workScheduleId?: string | null
+      }
       type AssignmentState = { employeeIds: string[]; fromDate: string | null; toDate: string | null; daysOfWeek: number[] }
 
       // График назначаем людям выбранного типа: студентам он нужен, чтобы попасть в отчёт.
@@ -1183,8 +1197,15 @@ useEffect(() => {
         apiRequest<AssignmentState>(`/api/work-schedules/${s.id}/assignment?kind=${kind}`, { token }),
       ])
 
-      setAssignEmps(empData.map(e => ({ id: e.id, name: `${e.firstName} ${e.lastName}`, dept: e.department?.name ?? e.housingBlockName ?? '' })))
+      // Группа в окне — та же, что в фильтрах страницы: факультет у студента, отдел у сотрудника.
+      setAssignEmps(empData.map(e => ({
+        id: e.id, name: `${e.firstName} ${e.lastName}`,
+        dept: (students ? e.housingBlockName : e.department?.name) ?? '',
+        deptId: (students ? e.housingBlockId : e.department?.id) ?? null,
+        scheduleId: e.workScheduleId ?? null,
+      })))
       setAssignSelEmps(new Set(state.employeeIds))
+      setAssignCurrent(new Set(state.employeeIds))
 
       // Days of week derived from actual patterns in DB (always accurate after clean overwrite)
       const dows = state.daysOfWeek.length > 0 ? state.daysOfWeek : [1, 2, 3, 4, 5]
@@ -1215,12 +1236,14 @@ useEffect(() => {
   }
 
   async function doAssign() {
-    if (!token || !assignSchedule || assignSelEmps.size === 0) return
+    // Снятие касается только тех, кто стоит на этой смене: bulk-schedule с null очищает
+    // человеку все дни, и отмеченный сотрудник с другой сменой потерял бы её.
+    const empIds = [...assignSelEmps].filter(id => !assignRemoveMode || assignCurrent.has(id))
+    if (!token || !assignSchedule || empIds.length === 0) return
     if (!assignRemoveMode && assignSelDows.size === 0) return
     setAssignSaving(true)
     setAssignError(null)
     try {
-      const empIds = [...assignSelEmps]
 
       if (assignRemoveMode) {
         // Remove mode: clear WorkScheduleId + delete all day patterns via backend (one call).
@@ -1257,7 +1280,7 @@ useEffect(() => {
         setAssignLastDows(new Set(assignSelDows))
       }
 
-      setAssignSuccessCount(assignSelEmps.size)
+      setAssignSuccessCount(empIds.length)
       setAssignError(null)
       setAssignSchedule(null)
       setAssignRemoveMode(false)
@@ -2832,23 +2855,99 @@ useEffect(() => {
           t('workHours.dow.sat'),
           t('workHours.dow.sun'),
         ]
-        const filtered = assignEmps.filter(e =>
-          e.name.toLowerCase().includes(assignSearch.toLowerCase()) ||
-          e.dept.toLowerCase().includes(assignSearch.toLowerCase())
+        // Статус сотрудника относительно этой смены.
+        const statusOf = (e: typeof assignEmps[number]): 'this' | 'none' | 'other' =>
+          assignCurrent.has(e.id) ? 'this' : e.scheduleId ? 'other' : 'none'
+        const scheduleById = new Map(schedules.map(s => [s.id, s]))
+
+        // Группа — отдел у сотрудников, факультет у студентов (то же дерево, что в фильтрах страницы).
+        const noGroupLabel = t(students ? 'workHours.assignNoBlock' : 'workHours.assignNoDept')
+
+        // Выбранный отдел берёт и все вложенные — как дерево в остальных фильтрах.
+        const deptScope = new Set<string>()
+        if (assignDeptIds.size > 0) {
+          assignDeptIds.forEach(id => deptScope.add(id))
+          let grew = true
+          while (grew) {
+            grew = false
+            for (const d of groupTree) {
+              if (d.parentId && deptScope.has(d.parentId) && !deptScope.has(d.id)) { deptScope.add(d.id); grew = true }
+            }
+          }
+        }
+        const NO_DEPT = '__none__'
+        const inDept = (e: typeof assignEmps[number]) =>
+          assignDeptIds.size === 0 || deptScope.has(e.deptId ?? NO_DEPT)
+
+        const q = assignSearch.trim().toLowerCase()
+        // В режиме снятия показываем только тех, кто на этой смене: снимать больше не с кого.
+        const base = assignEmps.filter(e => inDept(e) && (!assignRemoveMode || assignCurrent.has(e.id)))
+        const statusCounts = { all: base.length, this: 0, none: 0, other: 0 }
+        base.forEach(e => { statusCounts[statusOf(e)]++ })
+        const filtered = base.filter(e =>
+          (assignRemoveMode || assignStatus === 'all' || statusOf(e) === assignStatus) &&
+          (!q || e.name.toLowerCase().includes(q) || e.dept.toLowerCase().includes(q))
         )
         const allSelected = filtered.length > 0 && filtered.every(e => assignSelEmps.has(e.id))
+        const effectiveSel = assignRemoveMode
+          ? [...assignSelEmps].filter(id => assignCurrent.has(id)).length
+          : assignSelEmps.size
+
+        // Отделы в порядке дерева, «без отдела» — в конце. Те же строки рисует фильтр отделов.
+        const deptRows: { id: string; name: string; depth: number }[] = []
+        const walkRows = (parentId: string | null, depth: number) => {
+          groupTree
+            .filter(d => (d.parentId ?? null) === parentId)
+            .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+            .forEach(d => { deptRows.push({ id: d.id, name: d.name, depth }); walkRows(d.id, depth + 1) })
+        }
+        walkRows(null, 0)
+        if (assignEmps.some(e => !e.deptId)) deptRows.push({ id: NO_DEPT, name: noGroupLabel, depth: 0 })
+        const deptOrder = new Map(deptRows.map((d, i) => [d.id, i]))
+
+        // Список разбит по отделам.
+        const groupMap = new Map<string, typeof filtered>()
+        filtered.forEach(e => {
+          const k = e.deptId ?? NO_DEPT
+          if (!groupMap.has(k)) groupMap.set(k, [])
+          groupMap.get(k)!.push(e)
+        })
+        const groupsList = [...groupMap.entries()]
+          .map(([k, emps]) => ({
+            key: k,
+            name: k === NO_DEPT ? noGroupLabel : (emps[0].dept || noGroupLabel),
+            emps: [...emps].sort((a, b) => a.name.localeCompare(b.name)),
+          }))
+          .sort((a, b) => (deptOrder.get(a.key) ?? Number.MAX_SAFE_INTEGER) - (deptOrder.get(b.key) ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name))
 
         const toggleEmp = (id: string) =>
           setAssignSelEmps(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
         const toggleDow = (d: number) =>
           setAssignSelDows(prev => { const n = new Set(prev); n.has(d) ? n.delete(d) : n.add(d); return n })
-        const toggleAll = () =>
+        const toggleMany = (ids: string[], on: boolean) =>
           setAssignSelEmps(prev => {
             const n = new Set(prev)
-            if (allSelected) { filtered.forEach(e => n.delete(e.id)) }
-            else { filtered.forEach(e => n.add(e.id)) }
+            ids.forEach(id => { if (on) n.add(id); else n.delete(id) })
             return n
           })
+        const toggleAll = () => toggleMany(filtered.map(e => e.id), !allSelected)
+        const toggleDeptFilter = (id: string) =>
+          setAssignDeptIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+        const deptQuery = assignDeptSearch.trim().toLowerCase()
+        const visibleDeptRows = deptQuery
+          ? deptRows.filter(d => d.name.toLowerCase().includes(deptQuery)).map(d => ({ ...d, depth: 0 }))
+          : deptRows
+        const deptLabel = assignDeptIds.size === 0
+          ? t(kindText.allGroups)
+          : assignDeptIds.size === 1
+            ? (deptRows.find(d => assignDeptIds.has(d.id))?.name ?? '')
+            : t(students ? 'workHours.assignBlocksSelected' : 'workHours.assignDeptsSelected', { count: assignDeptIds.size })
+        const STATUS_TABS: { key: 'all' | 'this' | 'none' | 'other'; label: string }[] = [
+          { key: 'all', label: t('workHours.assignStatusAll') },
+          { key: 'this', label: t('workHours.assignStatusThis') },
+          { key: 'none', label: t('workHours.assignStatusNone') },
+          { key: 'other', label: t('workHours.assignStatusOther') },
+        ]
 
         // count matching dates (only relevant for Assign mode)
         const parseLocal = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
@@ -2860,7 +2959,7 @@ useEffect(() => {
             if (assignSelDows.has(dow)) dateCount++
           }
         }
-        const canAssign = assignSelEmps.size > 0 && (assignRemoveMode || (assignSelDows.size > 0 && dateCount > 0))
+        const canAssign = effectiveSel > 0 && (assignRemoveMode || (assignSelDows.size > 0 && dateCount > 0))
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]"
@@ -2896,41 +2995,132 @@ useEffect(() => {
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">
                         {t('workHours.employees')}
-                        {assignSelEmps.size > 0 && (
-                          <span className="ml-2 text-primary bg-primary/10 px-1.5 py-0.5 rounded font-black">{assignSelEmps.size}</span>
+                        {effectiveSel > 0 && (
+                          <span className="ml-2 text-primary bg-primary/10 px-1.5 py-0.5 rounded font-black">{effectiveSel}</span>
                         )}
                       </span>
-                      <button onClick={toggleAll}
-                        className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">
-                        {allSelected ? t('workHours.deselectAll') : t('common.selectAll')}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {assignSelEmps.size > 0 && (
+                          <button onClick={() => setAssignSelEmps(new Set())}
+                            className="text-[10px] font-black uppercase tracking-wider text-text-muted hover:text-text-dark">
+                            {t('workHours.assignClearSelection')}
+                          </button>
+                        )}
+                        <button onClick={toggleAll} disabled={filtered.length === 0}
+                          className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline disabled:opacity-40">
+                          {allSelected ? t('workHours.deselectAll') : t('workHours.assignSelectShown', { count: filtered.length })}
+                        </button>
+                      </div>
                     </div>
-                    <div className="relative">
-                      <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[14px]">search</span>
-                      <input type="text" placeholder={t('common.search')} value={assignSearch}
-                        onChange={e => setAssignSearch(e.target.value)}
-                        className="w-full pl-7 pr-3 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20" />
+                    <div className="flex gap-2">
+                      <div className="relative flex-1 min-w-0">
+                        <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-[14px]">search</span>
+                        <input type="text" placeholder={t('common.search')} value={assignSearch}
+                          onChange={e => setAssignSearch(e.target.value)}
+                          className="w-full pl-7 pr-3 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20" />
+                      </div>
+                      {/* Отделы: несколько сразу, вложенные входят в родителя */}
+                      <div className="relative w-[46%] shrink-0">
+                        <button type="button" onClick={() => setAssignDeptOpen(o => !o)}
+                          className={`w-full flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 text-xs font-bold rounded-xl border transition-colors
+                            ${assignDeptIds.size > 0 ? 'border-primary/40 bg-primary/5 text-primary' : 'border-black/10 bg-black/[0.04] text-text-dark'}`}>
+                          <span className="material-symbols-outlined text-[14px] shrink-0">account_tree</span>
+                          <span className="flex-1 min-w-0 truncate text-left">{deptLabel}</span>
+                          <span className="material-symbols-outlined text-[16px] shrink-0">{assignDeptOpen ? 'expand_less' : 'expand_more'}</span>
+                        </button>
+                        {assignDeptOpen && (
+                          <div className="absolute right-0 top-full mt-1 z-20 w-[300px] bg-surface rounded-2xl shadow-xl border border-black/10 p-2 space-y-2">
+                            <input type="text" autoFocus placeholder={t(kindText.groupSearch)} value={assignDeptSearch}
+                              onChange={e => setAssignDeptSearch(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-black/[0.04] rounded-xl border border-black/10 outline-none focus:ring-2 focus:ring-primary/20" />
+                            <div className="max-h-64 overflow-y-auto space-y-0.5">
+                              {visibleDeptRows.map(d => {
+                                const on = assignDeptIds.has(d.id)
+                                const count = assignEmps.filter(e => (e.deptId ?? NO_DEPT) === d.id).length
+                                return (
+                                  <label key={d.id} style={{ paddingLeft: 8 + d.depth * 14 }}
+                                    className={`flex items-center gap-2 pr-2 py-1.5 rounded-lg cursor-pointer text-xs font-bold ${on ? 'bg-primary/10 text-primary' : 'text-text-dark hover:bg-black/[0.04]'}`}>
+                                    <input type="checkbox" checked={on} onChange={() => toggleDeptFilter(d.id)}
+                                      className="w-3.5 h-3.5 accent-primary shrink-0" />
+                                    <span className="flex-1 min-w-0 truncate">{d.name}</span>
+                                    <span className="text-[10px] text-text-muted shrink-0">{count}</span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                            <div className="flex items-center justify-between border-t border-black/[0.06] pt-2">
+                              <button type="button" onClick={() => setAssignDeptIds(new Set())}
+                                className="text-[10px] font-black uppercase tracking-wider text-text-muted hover:text-text-dark">
+                                {t(kindText.allGroups)}
+                              </button>
+                              <button type="button" onClick={() => setAssignDeptOpen(false)}
+                                className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">
+                                {t('common.apply')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
+                    {/* Кто уже на этой смене, у кого смены нет, у кого другая */}
+                    {!assignRemoveMode && (
+                      <div className="flex rounded-xl bg-black/[0.04] p-0.5 text-[10px] font-black">
+                        {STATUS_TABS.map(s => (
+                          <button key={s.key} type="button" onClick={() => setAssignStatus(s.key)}
+                            className={`flex-1 px-1.5 py-1 rounded-lg transition-colors truncate ${assignStatus === s.key ? 'bg-surface text-text-dark shadow-sm' : 'text-text-muted hover:text-text-dark'}`}>
+                            {s.label} <span className="opacity-60">{statusCounts[s.key]}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex-1 overflow-y-auto">
                     {assignEmps.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-text-muted text-sm">{t('common.loading')}</div>
                     ) : filtered.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-text-muted text-sm">{t('workHours.noEmployeesMatch')}</div>
-                    ) : filtered.map(e => {
-                      const sel = assignSelEmps.has(e.id)
+                    ) : groupsList.map(g => {
+                      const ids = g.emps.map(e => e.id)
+                      const selCount = ids.filter(id => assignSelEmps.has(id)).length
+                      const all = selCount === ids.length
                       return (
-                        <label key={e.id}
-                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors border-b border-black/[0.04] last:border-none
-                            ${sel ? 'bg-primary/5' : 'hover:bg-black/[0.03]'}`}>
-                          <input type="checkbox" checked={sel} onChange={() => toggleEmp(e.id)}
-                            className="w-4 h-4 rounded accent-primary shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-bold truncate ${sel ? 'text-primary' : 'text-text-dark'}`}>{e.name}</p>
-                            {e.dept && <p className="text-[10px] text-text-muted truncate">{e.dept}</p>}
-                          </div>
-                          {sel && <span className="material-symbols-outlined text-primary text-[16px] shrink-0">check_circle</span>}
-                        </label>
+                        <div key={g.key}>
+                          {/* Отметка у отдела выбирает всех его сотрудников из текущего списка */}
+                          <label className="sticky top-0 z-10 flex items-center gap-3 px-4 py-2 bg-surface/95 backdrop-blur border-b border-black/[0.06] cursor-pointer">
+                            <input type="checkbox" checked={all}
+                              ref={el => { if (el) el.indeterminate = selCount > 0 && !all }}
+                              onChange={() => toggleMany(ids, !all)}
+                              className="w-4 h-4 rounded accent-primary shrink-0" />
+                            <span className="flex-1 min-w-0 text-[11px] font-black uppercase tracking-wider text-text-dark truncate">{g.name}</span>
+                            <span className="text-[10px] font-black text-text-muted shrink-0">{selCount}/{ids.length}</span>
+                          </label>
+                          {g.emps.map(e => {
+                            const sel = assignSelEmps.has(e.id)
+                            const st = statusOf(e)
+                            const other = st === 'other' ? scheduleById.get(e.scheduleId!) : undefined
+                            return (
+                              <label key={e.id}
+                                className={`flex items-center gap-3 pl-8 pr-4 py-2 cursor-pointer transition-colors border-b border-black/[0.04]
+                                  ${sel ? 'bg-primary/5' : 'hover:bg-black/[0.03]'}`}>
+                                <input type="checkbox" checked={sel} onChange={() => toggleEmp(e.id)}
+                                  className="w-4 h-4 rounded accent-primary shrink-0" />
+                                <p className={`flex-1 min-w-0 text-sm font-bold truncate ${sel ? 'text-primary' : 'text-text-dark'}`}>{e.name}</p>
+                                {st === 'this' && (
+                                  <span className="shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: assignSchedule.color + '22', color: assignSchedule.color }}>
+                                    {t('workHours.assignBadgeThis')}
+                                  </span>
+                                )}
+                                {other && (
+                                  <span className="shrink-0 max-w-[120px] flex items-center gap-1 text-[10px] font-bold text-text-muted truncate" title={other.name}>
+                                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: other.color }} />
+                                    <span className="truncate">{other.name}</span>
+                                  </span>
+                                )}
+                              </label>
+                            )
+                          })}
+                        </div>
                       )
                     })}
                   </div>
@@ -3004,7 +3194,7 @@ useEffect(() => {
                   {canAssign && !assignRemoveMode && (
                     <div className="rounded-2xl px-4 py-3 text-[11px] font-bold space-y-1"
                       style={{ backgroundColor: assignSchedule.color + '15', color: assignSchedule.color }}>
-                      <p dangerouslySetInnerHTML={{ __html: t('workHours.willAssignSummary', { days: dateCount, employees: assignSelEmps.size }) }} />
+                      <p dangerouslySetInnerHTML={{ __html: t('workHours.willAssignSummary', { days: dateCount, employees: effectiveSel }) }} />
                       <p className="opacity-70">{t('workHours.willAssignDefaultNote')}</p>
                     </div>
                   )}
@@ -3047,8 +3237,8 @@ useEffect(() => {
                     {assignSaving
                       ? (assignRemoveMode ? t('workHours.removing') : t('workHours.assigning'))
                       : (assignRemoveMode
-                          ? t('workHours.removeFromEmployees', { count: assignSelEmps.size || '?' })
-                          : t('workHours.assignToEmployees', { count: assignSelEmps.size || '?' }))}
+                          ? t('workHours.removeFromEmployees', { count: effectiveSel || '?' })
+                          : t('workHours.assignToEmployees', { count: effectiveSel || '?' }))}
                   </button>
                 </div>
               </div>
