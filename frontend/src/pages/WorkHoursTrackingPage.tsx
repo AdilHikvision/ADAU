@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
@@ -301,6 +302,9 @@ interface PeriodRow {
   corrected: boolean
   permissionHours?: number | null
   permissionShowInReport?: boolean | null
+  permissionFrom?: string | null
+  permissionTo?: string | null
+  permissionReason?: string | null
 }
 
 interface DailySummary {
@@ -330,6 +334,20 @@ interface DailySummary {
   permissionHours?: number | null
   permissionShowInReport?: boolean | null
   permissionReason?: string | null
+}
+
+/**
+ * Ячейка «Разрешение»: время отсутствия и причина. Как и в Excel/PDF/письме, показываются
+ * только разрешения с отметкой «показывать в отчёте».
+ */
+function PermissionCell({ row }: { row: Pick<DailySummary, 'permissionFrom' | 'permissionTo' | 'permissionReason' | 'permissionShowInReport'> }) {
+  if (!row.permissionShowInReport || !row.permissionFrom || !row.permissionTo) return <span className="text-text-light">—</span>
+  return (
+    <span className="text-xs">
+      <span className="font-mono font-bold text-sky-600">{row.permissionFrom}–{row.permissionTo}</span>
+      {row.permissionReason && <span className="ml-1.5 text-text-light">{row.permissionReason}</span>}
+    </span>
+  )
 }
 
 function formatDateOnly(iso: string) {
@@ -586,7 +604,7 @@ function computeShiftHours(start: string, end: string): number | null {
  */
 const ATTENDANCE_COLUMNS = [
   'employee', 'department', 'date', 'schedule', 'shift', 'checkIn', 'checkOut',
-  'hours', 'norm', 'overtime', 'late', 'early', 'status', 'corrected',
+  'hours', 'norm', 'overtime', 'late', 'early', 'status', 'corrected', 'permission',
 ] as const
 type AttendanceColumn = typeof ATTENDANCE_COLUMNS[number]
 const COLUMNS_STORAGE_KEY = 'workHours.visibleColumns'
@@ -607,7 +625,7 @@ function loadVisibleColumns(): Set<AttendanceColumn> {
 }
 
 export function WorkHoursTrackingPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { token } = useAuth()
   const { exporting, downloadReport } = useExportReport(token)
   const [visibleColumns, setVisibleColumns] = useState<Set<AttendanceColumn>>(loadVisibleColumns)
@@ -826,7 +844,7 @@ export function WorkHoursTrackingPage() {
       else if (tab === 'monthly') { const r = monthRange(monthlyAnchor); from = r.from; to = r.to }
       await apiRequest('/api/reports/attendance/send-email', {
         method: 'POST', token,
-        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to, columns: ATTENDANCE_COLUMNS.filter(showCol), kind }),
+        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to, columns: ATTENDANCE_COLUMNS.filter(showCol), kind, lang: i18n.language }),
       })
       alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
       setEmailReportModal(false)
@@ -1562,8 +1580,7 @@ useEffect(() => {
             {tab === 'daily' && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
-                <input
-                  type="date"
+                <DateInput
                   value={filterDailyDate}
                   onChange={(e) => setFilterDailyDate(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
@@ -1574,7 +1591,7 @@ useEffect(() => {
             {tab === 'weekly' && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.weekOf')}</label>
-                <input type="date" value={weeklyAnchor} onChange={(e) => setWeeklyAnchor(e.target.value)}
+                <DateInput value={weeklyAnchor} onChange={(e) => setWeeklyAnchor(e.target.value)}
                   className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none" />
               </div>
             )}
@@ -1673,6 +1690,7 @@ useEffect(() => {
                     params.set('from', range.from)
                     params.set('to', range.to)
                     params.set('columns', columnsParam)
+                    params.set('lang', i18n.language)
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
                 >
@@ -1693,6 +1711,7 @@ useEffect(() => {
                     params.set('from', range.from)
                     params.set('to', range.to)
                     params.set('columns', columnsParam)
+                    params.set('lang', i18n.language)
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
                 >
@@ -1881,6 +1900,7 @@ useEffect(() => {
                         {showCol('late') && <th className="px-5 py-3 text-right">{t('workHours.late')}</th>}
                         {showCol('early') && <th className="px-5 py-3 text-right">{t('workHours.early')}</th>}
                         {showCol('overtime') && <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>}
+                        {showCol('permission') && <th className="px-5 py-3 text-left">{t('workHours.columns.names.permission')}</th>}
                         <th className="px-5 py-3 text-right">{t('common.edit')}</th>
                       </tr>
                     </thead>
@@ -1922,6 +1942,7 @@ useEffect(() => {
                           {showCol('late') && <td className="px-5 py-3 text-right">{(d.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesHM(d.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>}
                           {showCol('early') && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(d.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>}
                           {showCol('overtime') && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
+                          {showCol('permission') && <td className="px-5 py-3"><PermissionCell row={d} /></td>}
                           <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                             <button type="button" onClick={() => openPermission(d)} className={`text-[10px] font-black uppercase tracking-wider hover:underline ${(d.permissionHours ?? 0) > 0 ? 'text-sky-600' : 'text-text-light'}`}>
@@ -2015,6 +2036,7 @@ useEffect(() => {
                                 <th className="px-5 py-2 text-right">{t('workHours.late')}</th>
                                 <th className="px-5 py-2 text-right">{t('workHours.early')}</th>
                                 <th className="px-5 py-2 text-right">{t('workHours.ot')}</th>
+                                {showCol('permission') && <th className="px-5 py-2 text-left">{t('workHours.columns.names.permission')}</th>}
                               </tr>
                             </thead>
                             <tbody>
@@ -2041,6 +2063,7 @@ useEffect(() => {
                                   <td className="px-5 py-2 text-right">{(r.lateMinutes ?? 0) > 0 ? <span className="text-amber-700 font-bold">+{formatMinutesHM(r.lateMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
                                   <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(r.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
                                   <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
+                                  {showCol('permission') && <td className="px-5 py-2"><PermissionCell row={r} /></td>}
                                 </tr>
                               ))}
                             </tbody>
@@ -2808,8 +2831,7 @@ useEffect(() => {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.startDate')}</label>
-              <input
-                type="date"
+              <DateInput
                 value={leaveForm.startDate}
                 onChange={(e) => setLeaveForm(p => ({ ...p, startDate: e.target.value }))}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
@@ -2817,8 +2839,7 @@ useEffect(() => {
             </div>
             <div className="space-y-1.5">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.endDate')}</label>
-              <input
-                type="date"
+              <DateInput
                 value={leaveForm.endDate}
                 onChange={(e) => setLeaveForm(p => ({ ...p, endDate: e.target.value }))}
                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
@@ -3204,12 +3225,12 @@ useEffect(() => {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-[10px] text-text-muted font-bold">{t('common.from')}</label>
-                        <input type="date" value={assignFrom} onChange={e => setAssignFrom(e.target.value)}
+                        <DateInput value={assignFrom} onChange={e => setAssignFrom(e.target.value)}
                           className="w-full rounded-xl bg-black/[0.04] border border-black/10 px-3 py-2 text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20" />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] text-text-muted font-bold">{t('common.to')}</label>
-                        <input type="date" value={assignTo} onChange={e => setAssignTo(e.target.value)}
+                        <DateInput value={assignTo} onChange={e => setAssignTo(e.target.value)}
                           className="w-full rounded-xl bg-black/[0.04] border border-black/10 px-3 py-2 text-sm font-bold text-text-dark outline-none focus:ring-2 focus:ring-primary/20" />
                       </div>
                     </div>

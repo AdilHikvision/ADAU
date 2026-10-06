@@ -1,4 +1,7 @@
 {
+  "datePicker": {
+    "placeholder": "gg.aa.iiii"
+  },
   "permissionGroups": {
     "Devices": "Qurğular",
     "Access_control": "Giriş nəzarəti",
@@ -2875,7 +2878,8 @@
         "late": "Gecikmə",
         "early": "Tez çıxma",
         "status": "Status",
-        "corrected": "Düzəliş edilib"
+        "corrected": "Düzəliş edilib",
+        "permission": "İcazə"
       }
     }
   },
@@ -3280,6 +3284,10 @@
   "authRecords": {
     "pageTitle": "Autentifikasiya qeydləri",
     "pageDescription": "Seçilmiş gün üçün cihazlardakı autentifikasiyalar.",
+    "accessLevels": "Giriş səviyyələri",
+    "allAccessLevels": "Bütün səviyyələr",
+    "accessLevelSearch": "Səviyyə axtar…",
+    "noAccessLevels": "Səviyyə tapılmadı",
     "person": "Şəxs",
     "refresh": "Yenilə",
     "recordsCount": "{{count}} qeyd",

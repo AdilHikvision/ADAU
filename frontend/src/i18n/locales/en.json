@@ -1,4 +1,7 @@
 {
+  "datePicker": {
+    "placeholder": "dd.mm.yyyy"
+  },
   "permissionGroups": {
     "Devices": "Devices",
     "Access_control": "Access control",
@@ -2883,7 +2886,8 @@
         "late": "Late",
         "early": "Early leave",
         "status": "Status",
-        "corrected": "Corrected"
+        "corrected": "Corrected",
+        "permission": "Permission"
       }
     }
   },
@@ -3288,6 +3292,10 @@
   "authRecords": {
     "pageTitle": "Authentication records",
     "pageDescription": "Device authentications for the selected day.",
+    "accessLevels": "Access levels",
+    "allAccessLevels": "All levels",
+    "accessLevelSearch": "Search level…",
+    "noAccessLevels": "No levels found",
     "person": "Person",
     "refresh": "Refresh",
     "recordsCount": "{{count}} records",

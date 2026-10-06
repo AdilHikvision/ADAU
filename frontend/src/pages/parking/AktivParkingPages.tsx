@@ -1,3 +1,4 @@
+import { DateInput } from '../../components/atoms/DateInput'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
@@ -315,7 +316,7 @@ export function ParkingVehiclesPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest mb-1.5">{t('parking.veh.licenseTo')}</label>
-                <input type="date" className={fieldCls} value={vehForm.accessValidTo}
+                <DateInput className={fieldCls} value={vehForm.accessValidTo}
                   onChange={(e) => setVehForm({ ...vehForm, accessValidTo: e.target.value })} />
               </div>
               <div>
@@ -496,11 +497,11 @@ export function ParkingReportsPage() {
         <div className="bg-surface rounded-2xl shadow-sm p-4 flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.from')}</label>
-            <input type="date" className={fieldCls} value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateInput className={fieldCls} value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.to')}</label>
-            <input type="date" className={fieldCls} value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateInput className={fieldCls} value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('parking.ap.zone')}</label>

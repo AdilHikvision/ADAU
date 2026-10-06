@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
@@ -101,13 +102,21 @@ export function AuthenticationRecordsPage() {
   const deptParam = useMemo(() => idsParam(deptIds), [deptIds])
   const blockParam = useMemo(() => idsParam(blockIds), [blockIds])
 
+  // Уровни доступа сужают выбор поверх человека/отдела/блока: остаются те, кому
+  // назначен хотя бы один из отмеченных. Смена типа людей выбор не сбрасывает.
+  const [levelIds, setLevelIds] = useState<string[]>([])
+  const levelParam = useMemo(() => idsParam(levelIds), [levelIds])
+
   const [people, setPeople] = useState<PersonItem[]>([])
   const [deptTree, setDeptTree] = useState<GroupNode[]>([])
   const [blocks, setBlocks] = useState<HousingBlockItem[]>([])
+  const [levels, setLevels] = useState<{ id: string; name: string }[]>([])
+  const [levelsOpen, setLevelsOpen] = useState(false)
+  const [levelSearch, setLevelSearch] = useState('')
 
   const [records, setRecords] = useState<AuthRecord[]>([])
   // Проходов за день бывают тысячи — режем на страницы; смена фильтров возвращает на первую.
-  const [page, setPage] = usePageReset(`${kind}|${date}|${personId}|${deptParam}|${blockParam}`)
+  const [page, setPage] = usePageReset(`${kind}|${date}|${personId}|${deptParam}|${blockParam}|${levelParam}`)
   const [error, setError] = useState<string | null>(null)
   // Кнопка «Обновить» перезапрашивает те же фильтры — меняем счётчик, а не состояние загрузки.
   const [reloadTick, setReloadTick] = useState(0)
@@ -137,6 +146,16 @@ export function AuthenticationRecordsPage() {
     return () => { cancelled = true }
   }, [token])
 
+  // Нет права на уровни доступа — список пуст и фильтр на странице не показывается.
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    void apiRequest<{ id: string; name: string }[]>('/api/access-levels', { token })
+      .then((list) => { if (!cancelled) setLevels(list.map((l) => ({ id: l.id, name: l.name }))) })
+      .catch(() => { if (!cancelled) setLevels([]) })
+    return () => { cancelled = true }
+  }, [token])
+
   useEffect(() => {
     if (!token || !housingModule) return
     let cancelled = false
@@ -148,7 +167,7 @@ export function AuthenticationRecordsPage() {
 
   // Показанные данные отстают от фильтров ровно пока идёт запрос — отдельный
   // флаг загрузки не нужен (и не заставляет эффект синхронно менять state).
-  const requestKey = [date, kind, personId, deptParam, blockParam, reloadTick].join('|')
+  const requestKey = [date, kind, personId, deptParam, blockParam, levelParam, reloadTick].join('|')
   const loading = loadedKey !== requestKey
 
   useEffect(() => {
@@ -159,6 +178,7 @@ export function AuthenticationRecordsPage() {
     if (personId) params.set('employeeId', personId)
     else if (deptParam) params.set('departmentIds', deptParam)
     else if (blockParam) params.set('housingBlockIds', blockParam)
+    if (levelParam) params.set('accessLevelIds', levelParam)
     void apiRequest<AuthRecord[]>(`/api/authentication-records?${params}`, { token })
       .then((list) => {
         if (cancelled) return
@@ -173,7 +193,18 @@ export function AuthenticationRecordsPage() {
         setLoadedKey(requestKey)
       })
     return () => { cancelled = true }
-  }, [token, date, kind, personId, deptParam, blockParam, requestKey])
+  }, [token, date, kind, personId, deptParam, blockParam, levelParam, requestKey])
+
+  const toggleLevel = (id: string) =>
+    setLevelIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  const selectedLevels = levels.filter((l) => levelIds.includes(l.id))
+  const levelQuery = levelSearch.trim().toLowerCase()
+  const visibleLevels = levelQuery ? levels.filter((l) => l.name.toLowerCase().includes(levelQuery)) : levels
+  const levelsLabel = selectedLevels.length === 0
+    ? t('authRecords.allAccessLevels')
+    : selectedLevels.length <= 2
+      ? selectedLevels.map((l) => l.name).join(', ')
+      : `${selectedLevels.slice(0, 2).map((l) => l.name).join(', ')} +${selectedLevels.length - 2}`
 
   const residents = kind === 'resident'
   // Окно выбора одинаково работает с отделами и блоками ЖКХ — отличается только источник.
@@ -333,10 +364,77 @@ export function AuthenticationRecordsPage() {
               )}
             </div>
 
+            {/* Уровни доступа: несколько сразу, сужают выбор слева */}
+            {levels.length > 0 && (
+              <div className="space-y-1 flex-1 min-w-[160px] relative">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('authRecords.accessLevels')}</label>
+                <button
+                  type="button"
+                  onClick={() => { setLevelSearch(''); setLevelsOpen((o) => !o) }}
+                  className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark text-left focus:ring-2 focus:ring-primary/20 outline-none flex items-center justify-between gap-2"
+                >
+                  <span className="truncate">{levelsLabel}</span>
+                  <span className="material-symbols-outlined text-base text-text-light shrink-0">{levelsOpen ? 'expand_less' : 'expand_more'}</span>
+                </button>
+                {levelsOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setLevelsOpen(false)} />
+                    <div className="absolute left-0 top-full mt-1 z-20 w-full min-w-[260px] bg-surface rounded-2xl shadow-xl border border-border-light p-2 space-y-2">
+                      <input
+                        type="text"
+                        autoFocus
+                        value={levelSearch}
+                        onChange={(e) => setLevelSearch(e.target.value)}
+                        placeholder={t('authRecords.accessLevelSearch')}
+                        className="w-full rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
+                      />
+                      <div className="max-h-64 overflow-y-auto space-y-0.5">
+                        {visibleLevels.length === 0 ? (
+                          <p className="px-3 py-3 text-xs text-text-light">{t('authRecords.noAccessLevels')}</p>
+                        ) : visibleLevels.map((l) => {
+                          const checked = levelIds.includes(l.id)
+                          return (
+                            <label key={l.id} className={`flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-bold cursor-pointer transition-colors ${checked ? 'bg-primary/10 text-primary' : 'text-text-dark hover:bg-background-light'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleLevel(l.id)} className="h-4 w-4 shrink-0 accent-primary cursor-pointer" />
+                              <span className="truncate">{l.name}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between border-t border-border-light pt-2">
+                        <button type="button" onClick={() => setLevelIds([])} className="px-2 text-[11px] font-black uppercase tracking-wide text-text-light hover:text-primary">
+                          {t('authRecords.allAccessLevels')}
+                        </button>
+                        <button type="button" onClick={() => setLevelsOpen(false)} className="px-2 text-[11px] font-black uppercase tracking-wide text-primary">
+                          {t('common.apply')}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+                {selectedLevels.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {selectedLevels.map((l) => (
+                      <span key={l.id} className="inline-flex items-center gap-1 rounded-lg bg-primary/10 pl-2 pr-1 py-0.5 text-[11px] font-bold text-primary">
+                        <span className="truncate max-w-[140px]">{l.name}</span>
+                        <button
+                          type="button"
+                          aria-label={t('authRecords.removeFromSelection', { name: l.name })}
+                          onClick={() => toggleLevel(l.id)}
+                          className="material-symbols-outlined text-[13px] leading-none hover:text-primary-dark"
+                        >
+                          close
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
-              <input
-                type="date"
+              <DateInput
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 className="rounded-xl bg-background-light border-none px-3 py-2 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"

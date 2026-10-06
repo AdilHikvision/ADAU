@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../components/templates'
@@ -968,8 +969,7 @@ export function PayrollCalculationPage() {
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.from')}</label>
-                            <input
-                                type="date"
+                            <DateInput
                                 value={newStartDate}
                                 onChange={e => setNewStartDate(e.target.value)}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
@@ -977,8 +977,7 @@ export function PayrollCalculationPage() {
                         </div>
                         <div>
                             <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('common.to')}</label>
-                            <input
-                                type="date"
+                            <DateInput
                                 value={newEndDate}
                                 onChange={e => setNewEndDate(e.target.value)}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"
@@ -1196,8 +1195,7 @@ export function PayrollCalculationPage() {
                         </div>
                         <div className="col-span-2">
                             <label className="block text-[10px] font-black text-text-muted uppercase tracking-wider mb-1">{t('payroll.effectiveFrom')}</label>
-                            <input
-                                type="date"
+                            <DateInput
                                 value={salaryForm.effectiveFrom}
                                 onChange={e => setSalaryForm(f => ({ ...f, effectiveFrom: e.target.value }))}
                                 className="w-full rounded-xl bg-background-light border-none px-3 py-2.5 text-sm font-bold text-text-dark focus:ring-2 focus:ring-primary/20 outline-none"

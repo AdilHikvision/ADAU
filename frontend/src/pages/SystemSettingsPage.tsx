@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -2146,8 +2147,7 @@ export function SystemSettingsPage() {
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.from')}</label>
-                                                <input
-                                                    type="date"
+                                                <DateInput
                                                     value={logSyncManualFrom}
                                                     onChange={(e) => setLogSyncManualFrom(e.target.value)}
                                                     className="w-full bg-slate-50 border border-border-light rounded-2xl px-4 py-3 text-sm font-bold text-text-dark"
@@ -2155,8 +2155,7 @@ export function SystemSettingsPage() {
                                             </div>
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.to')}</label>
-                                                <input
-                                                    type="date"
+                                                <DateInput
                                                     value={logSyncManualTo}
                                                     onChange={(e) => setLogSyncManualTo(e.target.value)}
                                                     className="w-full bg-slate-50 border border-border-light rounded-2xl px-4 py-3 text-sm font-bold text-text-dark"

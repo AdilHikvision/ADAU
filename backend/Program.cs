@@ -4777,6 +4777,7 @@ app.MapGet("/api/authentication-records", async (
     string? departmentIds,
     Guid? housingBlockId,
     string? housingBlockIds,
+    string? accessLevelIds,
     string? kind,
     AppDbContext dbContext,
     CancellationToken cancellationToken) =>
@@ -4803,6 +4804,11 @@ app.MapGet("/api/authentication-records", async (
     var housingScope = await BuildHousingScopeAsync(ParseIdList(housingBlockId, housingBlockIds), dbContext, cancellationToken);
     if (housingScope is not null)
         peopleQuery = peopleQuery.Where(e => e.HousingBlockId != null && housingScope.Contains(e.HousingBlockId.Value));
+    // Уровни доступа сужают выбор поверх человека/отдела/блока: остаются те,
+    // кому назначен хотя бы один из отмеченных уровней.
+    var levelIds = ParseIdList(null, accessLevelIds);
+    if (levelIds.Count > 0)
+        peopleQuery = peopleQuery.Where(e => e.AccessLevels.Any(a => levelIds.Contains(a.AccessLevelId)));
 
     var people = await peopleQuery
         .Select(e => new { e.Id, e.FirstName, e.LastName, e.EmployeeNo })
@@ -5085,7 +5091,10 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 earlyLeaveMinutes = d.EarlyLeaveMinutes,
                 corrected = d.Corrected,
                 permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
-                permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport
+                permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport,
+                permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
+                permissionTo = perm?.ToTime.ToString(@"hh\:mm"),
+                permissionReason = perm?.Reason
             });
         }
     }
@@ -6070,7 +6079,10 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 d.IsDayOff,
                 d.IsAbsent,
                 d.OnLeave,
-                d.LeaveType));
+                d.LeaveType,
+                // В отчёт попадают только разрешения с ShowInReport — как и вычет часов.
+                perm is { ShowInReport: true } ? $"{perm.FromTime:hh\\:mm}–{perm.ToTime:hh\\:mm}" : null,
+                perm is { ShowInReport: true } ? perm.Reason : null));
         }
     }
     return (rows, employees.Count == 1 ? singleEmpName : null);
@@ -6079,7 +6091,8 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
 // Даты приходят как календарные дни ("2026-08-02") — биндим DateOnly и НЕ конвертируем
 // через ToUniversalTime(): DateTime с Kind=Unspecified трактовался как локальное время
 // сервера (+4 Баку) и период уезжал на день назад относительно выбранного в UI.
-app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, AppDbContext dbContext, CancellationToken ct) =>
+// lang — язык интерфейса пользователя (en / ru / az): на нём пишутся заголовки и статусы.
+app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -6090,12 +6103,13 @@ app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to,
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, employeeIds, departmentId, departmentIds, housingBlockIds, kind, dbContext, ct);
     // columns — колонки, оставленные в таблице. Пусто или параметра нет — весь набор.
-    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns));
+    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns),
+        ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident));
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
 }).RequireAuthorization("Reports.View");
 
-app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -6105,7 +6119,8 @@ app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, G
     var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, employeeIds, departmentId, departmentIds, housingBlockIds, kind, dbContext, ct);
-    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns));
+    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns),
+        ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident));
     return Results.File(bytes, "application/pdf", $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
 }).RequireAuthorization("Reports.View");
 
@@ -7616,16 +7631,27 @@ app.MapPost("/api/reports/attendance/send-email", async (
     // Письмо показывает те же колонки, что остались в таблице. Заголовок тоже
     // собирается здесь: в шаблоне на его месте стоит {{tableHead}}.
     var visible = AttendanceColumns.Parse(request.Columns);
+    // Заголовки — на языке интерфейса отправителя, как в Excel и PDF.
+    var text = ReportText.For(request.Lang, reportKind == PersonKind.Resident);
     var emailCols = new (string Key, string Header, bool Center)[]
     {
-        (AttendanceColumns.Date, "Date", false),
-        (AttendanceColumns.Employee, "Employee", false),
-        (AttendanceColumns.Department, "Department", false),
-        (AttendanceColumns.CheckIn, "Check-In", true),
-        (AttendanceColumns.CheckOut, "Check-Out", true),
-        (AttendanceColumns.Hours, "Hours", true),
-        (AttendanceColumns.Late, "Late", true),
+        (AttendanceColumns.Date, text["date"], false),
+        (AttendanceColumns.Employee, text["employee"], false),
+        (AttendanceColumns.Department, text["department"], false),
+        (AttendanceColumns.CheckIn, text["checkIn"], true),
+        (AttendanceColumns.CheckOut, text["checkOut"], true),
+        (AttendanceColumns.Hours, text["hours"], true),
+        (AttendanceColumns.Late, text["lateEmail"], true),
+        (AttendanceColumns.Permission, text["permission"], false),
     }.Where(c => visible.Contains(c.Key)).ToArray();
+
+    // Разрешения, отмеченные «показывать в отчёте»: время и причина в своей колонке.
+    var emailFromDate = DateOnly.FromDateTime(fromUtc);
+    var emailToDate = DateOnly.FromDateTime(toUtc);
+    var permByEmpDate = (await dbContext.AttendancePermissions.AsNoTracking()
+            .Where(p => p.ShowInReport && p.Date >= emailFromDate && p.Date <= emailToDate)
+            .ToListAsync(cancellationToken))
+        .ToDictionary(p => (p.EmployeeId, p.Date));
     if (emailCols.Length == 0)
         return Results.BadRequest(new { message = "At least one report column must stay visible." });
 
@@ -7659,6 +7685,10 @@ app.MapPost("/api/reports/attendance/send-email", async (
             var coStr = last.HasValue && last != first ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(last.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm") : "—";
             var lateStr = lateMin is > 0 ? $"+{lateMin}m" : "—";
             var hoursStr = hours > 0 ? hours.ToString("0.0") : "—";
+            var permStr = permByEmpDate.TryGetValue((e.Id, DateOnly.FromDateTime(day)), out var perm)
+                ? System.Net.WebUtility.HtmlEncode(
+                    $"{perm.FromTime:hh\\:mm}–{perm.ToTime:hh\\:mm}" + (string.IsNullOrWhiteSpace(perm.Reason) ? "" : $" · {perm.Reason.Trim()}"))
+                : "—";
             tableRows.Append("<tr>");
             foreach (var c in emailCols)
             {
@@ -7670,6 +7700,7 @@ app.MapPost("/api/reports/attendance/send-email", async (
                     AttendanceColumns.CheckIn => ciStr,
                     AttendanceColumns.CheckOut => coStr,
                     AttendanceColumns.Hours => hoursStr,
+                    AttendanceColumns.Permission => permStr,
                     _ => lateStr,
                 };
                 tableRows.Append($"<td style='padding:5px 10px;border-bottom:1px solid #e2e8f0{(c.Center ? ";text-align:center" : "")}'>{value}</td>");
@@ -12563,7 +12594,7 @@ public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody)
 public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
 /// <summary>Columns — колонки, оставленные в таблице; null или пусто — весь набор.</summary>
 // Kind — "employee" (по умолчанию) или "resident" (студенты ADAU).
-public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2, string[]? Columns = null, string? Kind = null);
+public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2, string[]? Columns = null, string? Kind = null, string? Lang = null);
 public sealed record SendPayrollReportRequest(string To);
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub, INotificationService notificationService) : IDeviceStatusBroadcaster

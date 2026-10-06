@@ -1,4 +1,7 @@
 {
+  "datePicker": {
+    "placeholder": "дд.мм.гггг"
+  },
   "permissionGroups": {
     "Devices": "Устройства",
     "Access_control": "Контроль доступа",
@@ -2898,7 +2901,8 @@
         "late": "Опоздание",
         "early": "Ранний уход",
         "status": "Статус",
-        "corrected": "Скорректировано"
+        "corrected": "Скорректировано",
+        "permission": "Разрешение"
       }
     }
   },
@@ -3303,6 +3307,10 @@
   "authRecords": {
     "pageTitle": "Записи аутентификации",
     "pageDescription": "Аутентификации на устройствах за выбранный день.",
+    "accessLevels": "Уровни доступа",
+    "allAccessLevels": "Все уровни",
+    "accessLevelSearch": "Поиск уровня…",
+    "noAccessLevels": "Уровни не найдены",
     "person": "Человек",
     "refresh": "Обновить",
     "recordsCount": "{{count}} записей",

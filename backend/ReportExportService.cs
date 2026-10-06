@@ -27,14 +27,100 @@ public sealed record AttendancePeriodRow(
     bool IsDayOff,
     bool IsAbsent,
     bool OnLeave,
-    string? LeaveType)
+    string? LeaveType,
+    // Почасовое разрешение дня (только с ShowInReport): «13:00–15:00» и причина.
+    string? PermissionTime = null,
+    string? PermissionReason = null)
 {
-    /// <summary>Human-readable day status, shared by the Excel and PDF reports.</summary>
-    public string StatusLabel =>
-        IsDayOff ? "Day off"
-        : OnLeave ? (LeaveType == "DayOff" ? "Day off (leave)" : "On leave")
-        : IsAbsent ? "Absent"
-        : CheckInUtc.HasValue ? "Present" : "";
+    /// <summary>Статус дня на языке отчёта — общий для Excel и PDF.</summary>
+    public string StatusLabel(ReportText t) =>
+        IsDayOff ? t["dayOff"]
+        : OnLeave ? (LeaveType == "DayOff" ? t["dayOffLeave"] : t["onLeave"])
+        : IsAbsent ? t["absent"]
+        : CheckInUtc.HasValue ? t["present"] : "";
+
+    /// <summary>Текст колонки «Разрешение»: время и, если указана, причина.</summary>
+    public string PermissionLabel =>
+        PermissionTime is null ? ""
+        : string.IsNullOrWhiteSpace(PermissionReason) ? PermissionTime
+        : $"{PermissionTime} · {PermissionReason.Trim()}";
+}
+
+/// <summary>
+/// Подписи отчёта по посещаемости на языке пользователя (en / ru / az). Язык приходит
+/// от клиента параметром lang — тот же, что выбран в интерфейсе. Неизвестный язык и
+/// отсутствующий ключ откатываются на английский.
+/// </summary>
+public sealed class ReportText
+{
+    readonly Dictionary<string, string> _map;
+    readonly bool _students;
+    ReportText(Dictionary<string, string> map, bool students) { _map = map; _students = students; }
+
+    /// <summary>students — отчёт по студентам (ADAU): колонка человека называется иначе.</summary>
+    public static ReportText For(string? lang, bool students = false)
+    {
+        var code = (lang ?? "").Trim().ToLowerInvariant();
+        code = code.Length >= 2 ? code[..2] : "en";
+        return new ReportText(code switch { "ru" => Ru, "az" => Az, _ => En }, students);
+    }
+
+    public string this[string key]
+    {
+        get
+        {
+            var k = _students && key == "employee" ? "student" : key;
+            return _map.TryGetValue(k, out var v) ? v : En.TryGetValue(k, out var e) ? e : key;
+        }
+    }
+
+    static readonly Dictionary<string, string> En = new()
+    {
+        ["title"] = "Work Hours Report", ["sheet"] = "Work Hours", ["period"] = "Period", ["generated"] = "Generated",
+        ["total"] = "TOTAL", ["yes"] = "Yes", ["page"] = "Page", ["of"] = "of",
+        ["employee"] = "Employee", ["student"] = "Student", ["department"] = "Department", ["date"] = "Date",
+        ["schedule"] = "Schedule", ["shiftStart"] = "Shift Start", ["shiftEnd"] = "Shift End",
+        ["checkIn"] = "Check In", ["checkOut"] = "Check Out", ["hours"] = "Hours", ["norm"] = "Norm",
+        ["overtime"] = "Overtime", ["late"] = "Late (h)", ["early"] = "Early (h)", ["status"] = "Status",
+        ["corrected"] = "Corrected", ["permission"] = "Permission",
+        ["shiftStartShort"] = "Shift S", ["shiftEndShort"] = "Shift E", ["inShort"] = "In", ["outShort"] = "Out",
+        ["overtimeShort"] = "OT", ["lateShort"] = "Late h", ["earlyShort"] = "Early h", ["correctedShort"] = "Corr.",
+        ["lateEmail"] = "Late",
+        ["dayOff"] = "Day off", ["dayOffLeave"] = "Day off (leave)", ["onLeave"] = "On leave",
+        ["absent"] = "Absent", ["present"] = "Present",
+    };
+
+    static readonly Dictionary<string, string> Ru = new()
+    {
+        ["title"] = "Отчёт по рабочему времени", ["sheet"] = "Рабочее время", ["period"] = "Период", ["generated"] = "Сформирован",
+        ["total"] = "ИТОГО", ["yes"] = "Да", ["page"] = "Стр.", ["of"] = "из",
+        ["employee"] = "Сотрудник", ["student"] = "Студент", ["department"] = "Отдел", ["date"] = "Дата",
+        ["schedule"] = "График", ["shiftStart"] = "Начало смены", ["shiftEnd"] = "Конец смены",
+        ["checkIn"] = "Приход", ["checkOut"] = "Уход", ["hours"] = "Часы", ["norm"] = "Норма",
+        ["overtime"] = "Сверхурочно", ["late"] = "Опоздание (ч)", ["early"] = "Ранний уход (ч)", ["status"] = "Статус",
+        ["corrected"] = "Исправлено", ["permission"] = "Разрешение",
+        ["shiftStartShort"] = "Нач.", ["shiftEndShort"] = "Кон.", ["inShort"] = "Приход", ["outShort"] = "Уход",
+        ["overtimeShort"] = "Сверх.", ["lateShort"] = "Опозд.", ["earlyShort"] = "Ран.ух.", ["correctedShort"] = "Испр.",
+        ["lateEmail"] = "Опоздание",
+        ["dayOff"] = "Выходной", ["dayOffLeave"] = "Выходной (отгул)", ["onLeave"] = "В отпуске",
+        ["absent"] = "Отсутствует", ["present"] = "Присутствует",
+    };
+
+    static readonly Dictionary<string, string> Az = new()
+    {
+        ["title"] = "İş vaxtı hesabatı", ["sheet"] = "İş vaxtı", ["period"] = "Dövr", ["generated"] = "Hazırlanıb",
+        ["total"] = "CƏMİ", ["yes"] = "Bəli", ["page"] = "Səh.", ["of"] = "/",
+        ["employee"] = "İşçi", ["student"] = "Tələbə", ["department"] = "Şöbə", ["date"] = "Tarix",
+        ["schedule"] = "Qrafik", ["shiftStart"] = "Növbə başlanğıcı", ["shiftEnd"] = "Növbə sonu",
+        ["checkIn"] = "Giriş", ["checkOut"] = "Çıxış", ["hours"] = "Saat", ["norm"] = "Norma",
+        ["overtime"] = "Əlavə iş", ["late"] = "Gecikmə (s)", ["early"] = "Erkən çıxış (s)", ["status"] = "Status",
+        ["corrected"] = "Düzəliş", ["permission"] = "İcazə",
+        ["shiftStartShort"] = "Başl.", ["shiftEndShort"] = "Son", ["inShort"] = "Giriş", ["outShort"] = "Çıxış",
+        ["overtimeShort"] = "Əlavə", ["lateShort"] = "Gecik.", ["earlyShort"] = "Erkən", ["correctedShort"] = "Düz.",
+        ["lateEmail"] = "Gecikmə",
+        ["dayOff"] = "İstirahət", ["dayOffLeave"] = "İstirahət (icazə)", ["onLeave"] = "Məzuniyyətdə",
+        ["absent"] = "Gəlməyib", ["present"] = "İştirak edib",
+    };
 }
 
 /// <summary>
@@ -61,11 +147,12 @@ public static class AttendanceColumns
     public const string Early = "early";
     public const string Status = "status";
     public const string Corrected = "corrected";
+    public const string Permission = "permission";
 
     public static readonly string[] All =
     [
         Employee, Department, Date, Schedule, Shift, CheckIn, CheckOut,
-        Hours, Norm, Overtime, Late, Early, Status, Corrected,
+        Hours, Norm, Overtime, Late, Early, Status, Corrected, Permission,
     ];
 
     /// <summary>
@@ -177,8 +264,9 @@ public static class ExcelReportBuilder
     public static byte[] BuildAttendance(
         IReadOnlyList<AttendancePeriodRow> rows,
         DateTime from, DateTime to, string? employeeFilter,
-        IReadOnlySet<string>? visibleColumns = null)
+        IReadOnlySet<string>? visibleColumns = null, ReportText? text = null)
     {
+        var t = text ?? ReportText.For(null);
         const string Brand = "#6e56cf";       // фирменный фиолетовый (Violet Aurora)
         const string BrandSoft = "#f0edfa";
         const string Line = "#e4e1ee";
@@ -193,19 +281,19 @@ public static class ExcelReportBuilder
         // так же, как часы и сверхурочные рядом и как в расчёте зарплаты.
         var all = new List<XlCol>
         {
-            new(AttendanceColumns.Employee, "Employee", (c, r, _) =>
+            new(AttendanceColumns.Employee, t["employee"], (c, r, _) =>
             {
                 c.Value = r.EmployeeName;
                 c.Style.Font.Bold = true;
             }, MinWidth: 22),
 
-            new(AttendanceColumns.Department, "Department", (c, r, _) =>
+            new(AttendanceColumns.Department, t["department"], (c, r, _) =>
             {
                 c.Value = r.Department ?? "";
                 c.Style.Font.FontColor = XLColor.FromHtml(Muted);
             }),
 
-            new(AttendanceColumns.Date, "Date", (c, r, _) =>
+            new(AttendanceColumns.Date, t["date"], (c, r, _) =>
             {
                 c.Value = r.Date.ToDateTime(TimeOnly.MinValue);
                 c.Style.DateFormat.Format = "dd.MM.yyyy";
@@ -214,54 +302,54 @@ public static class ExcelReportBuilder
                     c.Style.Font.FontColor = XLColor.FromHtml("#8e77e8");
             }),
 
-            new(AttendanceColumns.Schedule, "Schedule", (c, r, _) => c.Value = r.ScheduleName ?? ""),
+            new(AttendanceColumns.Schedule, t["schedule"], (c, r, _) => c.Value = r.ScheduleName ?? ""),
 
             // Ключ shift разворачивается в две колонки.
-            new(AttendanceColumns.Shift, "Shift Start", (c, r, _) =>
+            new(AttendanceColumns.Shift, t["shiftStart"], (c, r, _) =>
             {
                 c.Value = r.ShiftStart ?? "";
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }),
-            new(AttendanceColumns.Shift, "Shift End", (c, r, _) =>
+            new(AttendanceColumns.Shift, t["shiftEnd"], (c, r, _) =>
             {
                 c.Value = r.ShiftEnd ?? "";
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }),
 
-            new(AttendanceColumns.CheckIn, "Check In", (c, r, _) =>
+            new(AttendanceColumns.CheckIn, t["checkIn"], (c, r, _) =>
             {
                 c.Value = Hhmm(r.CheckInUtc);
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }, MinWidth: 11),
 
-            new(AttendanceColumns.CheckOut, "Check Out", (c, r, _) =>
+            new(AttendanceColumns.CheckOut, t["checkOut"], (c, r, _) =>
             {
                 c.Value = Hhmm(r.CheckOutUtc);
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }, MinWidth: 11),
 
-            new(AttendanceColumns.Hours, "Hours", (c, r, _) =>
+            new(AttendanceColumns.Hours, t["hours"], (c, r, _) =>
             {
                 c.Value = r.TotalHours;
                 c.Style.NumberFormat.Format = "0.00";
                 c.Style.Font.Bold = true;
             }, Sum: rs => rs.Sum(x => x.TotalHours)),
 
-            new(AttendanceColumns.Norm, "Norm", (c, r, _) =>
+            new(AttendanceColumns.Norm, t["norm"], (c, r, _) =>
             {
                 c.Value = r.NormHours > 0 ? (double?)r.NormHours : null;
                 c.Style.NumberFormat.Format = "0.00";
                 c.Style.Font.FontColor = XLColor.FromHtml(Muted);
             }, Sum: rs => rs.Sum(x => x.NormHours)),
 
-            new(AttendanceColumns.Overtime, "Overtime", (c, r, _) =>
+            new(AttendanceColumns.Overtime, t["overtime"], (c, r, _) =>
             {
                 c.Value = r.OvertimeHours > 0 ? (double?)r.OvertimeHours : null;
                 c.Style.NumberFormat.Format = "0.00";
                 c.Style.Font.FontColor = XLColor.FromHtml(Brand);
             }, Sum: rs => rs.Sum(x => x.OvertimeHours)),
 
-            new(AttendanceColumns.Late, "Late (h)", (c, r, _) =>
+            new(AttendanceColumns.Late, t["late"], (c, r, _) =>
             {
                 c.Value = r.LateMinutes.HasValue ? (double?)(r.LateMinutes.Value / 60.0) : null;
                 c.Style.NumberFormat.Format = "0.00";
@@ -272,7 +360,7 @@ public static class ExcelReportBuilder
                 }
             }, Sum: rs => rs.Sum(x => (x.LateMinutes ?? 0) / 60.0)),
 
-            new(AttendanceColumns.Early, "Early (h)", (c, r, _) =>
+            new(AttendanceColumns.Early, t["early"], (c, r, _) =>
             {
                 c.Value = r.EarlyLeaveMinutes.HasValue ? (double?)(r.EarlyLeaveMinutes.Value / 60.0) : null;
                 c.Style.NumberFormat.Format = "0.00";
@@ -281,25 +369,31 @@ public static class ExcelReportBuilder
             }, Sum: rs => rs.Sum(x => (x.EarlyLeaveMinutes ?? 0) / 60.0)),
 
             // Статус — цветной «чип»: заливка + цвет текста по состоянию дня.
-            new(AttendanceColumns.Status, "Status", (c, r, rowBg) =>
+            new(AttendanceColumns.Status, t["status"], (c, r, rowBg) =>
             {
                 var (stBg, stFg) = r.IsDayOff || (r.OnLeave && r.LeaveType == "DayOff") ? ("#eceaf2", Muted)
                     : r.OnLeave ? ("#fdf5e2", "#c07207")
                     : r.IsAbsent ? ("#fdeeef", "#dc2637")
                     : r.CheckInUtc.HasValue ? ("#e7f8f0", "#0e9f6e")
                     : (rowBg, "#16131f");
-                c.Value = r.StatusLabel;
+                c.Value = r.StatusLabel(t);
                 c.Style.Fill.BackgroundColor = XLColor.FromHtml(stBg);
                 c.Style.Font.FontColor = XLColor.FromHtml(stFg);
                 c.Style.Font.Bold = true;
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }, MinWidth: 14),
 
-            new(AttendanceColumns.Corrected, "Corrected", (c, r, _) =>
+            new(AttendanceColumns.Corrected, t["corrected"], (c, r, _) =>
             {
-                c.Value = r.Corrected ? "Yes" : "";
+                c.Value = r.Corrected ? t["yes"] : "";
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }),
+
+            new(AttendanceColumns.Permission, t["permission"], (c, r, _) =>
+            {
+                c.Value = r.PermissionLabel;
+                c.Style.Font.FontColor = XLColor.FromHtml("#0284c7");
+            }, MinWidth: 16),
         };
 
         var cols = all.Where(c => visible.Contains(c.Key)).ToList();
@@ -308,21 +402,21 @@ public static class ExcelReportBuilder
         int nCols = cols.Count;
 
         using var wb = new XLWorkbook();
-        var ws = wb.Worksheets.Add("Work Hours");
+        var ws = wb.Worksheets.Add(t["sheet"]);
         ws.ShowGridLines = false;
 
         // Title block
         ws.Range(1, 1, 1, nCols).Merge();
-        ws.Cell(1, 1).Value = "Work Hours Report";
+        ws.Cell(1, 1).Value = t["title"];
         ws.Cell(1, 1).Style.Font.Bold = true;
         ws.Cell(1, 1).Style.Font.FontSize = 16;
         ws.Cell(1, 1).Style.Font.FontColor = XLColor.FromHtml(Brand);
 
         ws.Range(2, 1, 2, nCols).Merge();
         ws.Cell(2, 1).Value =
-            $"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
-            + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"    ·    Employee: {employeeFilter}")
-            + $"    ·    Generated: {DateTime.Now:dd.MM.yyyy HH:mm}";
+            $"{t["period"]}: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+            + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"    ·    {t["employee"]}: {employeeFilter}")
+            + $"    ·    {t["generated"]}: {DateTime.Now:dd.MM.yyyy HH:mm}";
         ws.Cell(2, 1).Style.Font.FontColor = XLColor.FromHtml(Muted);
         ws.Cell(2, 1).Style.Font.FontSize = 10;
 
@@ -360,7 +454,7 @@ public static class ExcelReportBuilder
             ws.Range(row, 1, row, nCols).Style.Fill.BackgroundColor = XLColor.FromHtml(BrandSoft);
             ws.Range(row, 1, row, nCols).Style.Border.TopBorder = XLBorderStyleValues.Medium;
             ws.Range(row, 1, row, nCols).Style.Border.TopBorderColor = XLColor.FromHtml(Brand);
-            ws.Cell(row, 1).Value = "TOTAL";
+            ws.Cell(row, 1).Value = t["total"];
             ws.Cell(row, 1).Style.Font.Bold = true;
             ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml(Brand);
             for (int i = 0; i < nCols; i++)
@@ -813,8 +907,9 @@ public static class PdfReportBuilder
     public static byte[] BuildAttendance(
         IReadOnlyList<AttendancePeriodRow> rows,
         DateTime from, DateTime to, string? employeeFilter,
-        IReadOnlySet<string>? visibleColumns = null)
+        IReadOnlySet<string>? visibleColumns = null, ReportText? text = null)
     {
+        var t = text ?? ReportText.For(null);
         const string Line = "#ecebf4";
         const string Ink = "#1a1a2e";
         const string Muted = "#6e6980";
@@ -826,67 +921,70 @@ public static class PdfReportBuilder
 
         var all = new List<PdfCol>
         {
-            new(AttendanceColumns.Employee, "Employee", 3, true, (c, r) =>
+            new(AttendanceColumns.Employee, t["employee"], 3, true, (c, r) =>
                 c.Text(r.EmployeeName).FontSize(7.5f).SemiBold().FontColor(Ink)),
 
-            new(AttendanceColumns.Department, "Department", 2, true, (c, r) =>
+            new(AttendanceColumns.Department, t["department"], 2, true, (c, r) =>
                 c.Text(r.Department ?? "").FontSize(7.5f).FontColor(Muted)),
 
-            new(AttendanceColumns.Date, "Date", 52, false, (c, r) =>
+            new(AttendanceColumns.Date, t["date"], 52, false, (c, r) =>
                 c.AlignCenter().Text(r.Date.ToString("dd.MM.yy")).FontSize(7.5f)
                     .FontColor(r.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? "#8e77e8" : Ink)),
 
-            new(AttendanceColumns.Schedule, "Schedule", 2, true, (c, r) =>
+            new(AttendanceColumns.Schedule, t["schedule"], 2, true, (c, r) =>
                 c.Text(r.ScheduleName ?? "").FontSize(7.5f).FontColor(Ink)),
 
             // Ключ shift разворачивается в две колонки.
-            new(AttendanceColumns.Shift, "Shift S", 38, false, (c, r) =>
+            new(AttendanceColumns.Shift, t["shiftStartShort"], 38, false, (c, r) =>
                 c.AlignCenter().Text(r.ShiftStart ?? "").FontSize(7.5f).FontColor(Muted)),
-            new(AttendanceColumns.Shift, "Shift E", 38, false, (c, r) =>
+            new(AttendanceColumns.Shift, t["shiftEndShort"], 38, false, (c, r) =>
                 c.AlignCenter().Text(r.ShiftEnd ?? "").FontSize(7.5f).FontColor(Muted)),
 
-            new(AttendanceColumns.CheckIn, "In", 38, false, (c, r) =>
+            new(AttendanceColumns.CheckIn, t["inShort"], 38, false, (c, r) =>
                 c.AlignCenter().Text(Hhmm(r.CheckInUtc)).FontSize(7.5f).FontColor(Ink)),
 
-            new(AttendanceColumns.CheckOut, "Out", 38, false, (c, r) =>
+            new(AttendanceColumns.CheckOut, t["outShort"], 38, false, (c, r) =>
                 c.AlignCenter().Text(Hhmm(r.CheckOutUtc)).FontSize(7.5f).FontColor(Ink)),
 
-            new(AttendanceColumns.Hours, "Hours", 36, false, (c, r) =>
+            new(AttendanceColumns.Hours, t["hours"], 36, false, (c, r) =>
                 c.AlignRight().Text(r.TotalHours > 0 ? r.TotalHours.ToString("0.00") : "")
                     .FontSize(7.5f).Bold().FontColor(Ink),
                 Sum: rs => rs.Sum(x => x.TotalHours).ToString("0.00")),
 
-            new(AttendanceColumns.Norm, "Norm", 36, false, (c, r) =>
+            new(AttendanceColumns.Norm, t["norm"], 36, false, (c, r) =>
                 c.AlignRight().Text(r.NormHours > 0 ? r.NormHours.ToString("0.00") : "")
                     .FontSize(7.5f).FontColor(Muted),
                 Sum: rs => rs.Sum(x => x.NormHours).ToString("0.00")),
 
-            new(AttendanceColumns.Overtime, "OT", 36, false, (c, r) =>
+            new(AttendanceColumns.Overtime, t["overtimeShort"], 36, false, (c, r) =>
                 c.AlignRight().Text(r.OvertimeHours > 0 ? r.OvertimeHours.ToString("0.00") : "")
                     .FontSize(7.5f).FontColor(PrimaryHex),
                 Sum: rs => rs.Sum(x => x.OvertimeHours).ToString("0.00"), SumColor: PrimaryHex),
 
             // Опоздание и ранний уход — в часах, как соседние колонки часов.
-            new(AttendanceColumns.Late, "Late h", 36, false, (c, r) =>
+            new(AttendanceColumns.Late, t["lateShort"], 36, false, (c, r) =>
                 c.AlignRight().Text(r.LateMinutes > 0 ? (r.LateMinutes!.Value / 60.0).ToString("0.00") : "")
                     .FontSize(7.5f).Bold().FontColor(r.LateMinutes > 0 ? "#dc2637" : Ink),
                 Sum: rs => rs.Sum(x => (x.LateMinutes ?? 0) / 60.0).ToString("0.00"), SumColor: "#dc2637"),
 
-            new(AttendanceColumns.Early, "Early h", 36, false, (c, r) =>
+            new(AttendanceColumns.Early, t["earlyShort"], 36, false, (c, r) =>
                 c.AlignRight().Text(r.EarlyLeaveMinutes > 0 ? (r.EarlyLeaveMinutes!.Value / 60.0).ToString("0.00") : "")
                     .FontSize(7.5f).FontColor("#ea580c"),
                 Sum: rs => rs.Sum(x => (x.EarlyLeaveMinutes ?? 0) / 60.0).ToString("0.00"), SumColor: "#ea580c"),
 
-            new(AttendanceColumns.Status, "Status", 58, false, (c, r) =>
-                c.AlignCenter().Text(r.StatusLabel).FontSize(7.5f).SemiBold().FontColor(
+            new(AttendanceColumns.Status, t["status"], 58, false, (c, r) =>
+                c.AlignCenter().Text(r.StatusLabel(t)).FontSize(7.5f).SemiBold().FontColor(
                     r.IsDayOff || (r.OnLeave && r.LeaveType == "DayOff") ? Muted
                     : r.OnLeave ? "#c07207"
                     : r.IsAbsent ? "#dc2637"
                     : r.CheckInUtc.HasValue ? "#0e9f6e"
                     : Ink)),
 
-            new(AttendanceColumns.Corrected, "Corr.", 32, false, (c, r) =>
-                c.AlignCenter().Text(r.Corrected ? "Yes" : "").FontSize(7.5f).FontColor(Muted)),
+            new(AttendanceColumns.Corrected, t["correctedShort"], 32, false, (c, r) =>
+                c.AlignCenter().Text(r.Corrected ? t["yes"] : "").FontSize(7.5f).FontColor(Muted)),
+
+            new(AttendanceColumns.Permission, t["permission"], 2, true, (c, r) =>
+                c.Text(r.PermissionLabel).FontSize(7.5f).FontColor("#0284c7")),
         };
 
         var cols = all.Where(c => visible.Contains(c.Key)).ToList();
@@ -906,7 +1004,7 @@ public static class PdfReportBuilder
             {
                 page.Size(PageSizes.A4.Landscape());
                 page.Margin(1.5f, Unit.Centimetre);
-                page.DefaultTextStyle(t => t.FontSize(8).FontFamily("Arial"));
+                page.DefaultTextStyle(ts => ts.FontSize(8).FontFamily("Arial"));
 
                 page.Header().Column(col =>
                 {
@@ -914,13 +1012,13 @@ public static class PdfReportBuilder
                     {
                         r.RelativeItem().Column(left =>
                         {
-                            left.Item().Text("Work Hours Report")
+                            left.Item().Text(t["title"])
                                 .FontSize(16).Bold().FontColor(PrimaryHex);
-                            left.Item().Text($"Period: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
-                                    + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"   ·   Employee: {employeeFilter}"))
+                            left.Item().Text($"{t["period"]}: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+                                    + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $"   ·   {t["employee"]}: {employeeFilter}"))
                                 .FontSize(9).FontColor(Muted);
                         });
-                        r.AutoItem().AlignBottom().Text($"Generated: {DateTime.Now:dd.MM.yyyy HH:mm}")
+                        r.AutoItem().AlignBottom().Text($"{t["generated"]}: {DateTime.Now:dd.MM.yyyy HH:mm}")
                             .FontSize(7.5f).FontColor("#a09aaf");
                     });
                     col.Item().PaddingTop(6).LineHorizontal(1.5f).LineColor(PrimaryHex);
@@ -979,7 +1077,7 @@ public static class PdfReportBuilder
                             var col = cols[i];
                             if (i == 0)
                             {
-                                Total().Text("TOTAL").Bold().FontSize(7.5f).FontColor(PrimaryHex);
+                                Total().Text(t["total"]).Bold().FontSize(7.5f).FontColor(PrimaryHex);
                                 continue;
                             }
                             if (col.Sum is null)
@@ -995,12 +1093,12 @@ public static class PdfReportBuilder
 
                 page.Footer().Row(r =>
                 {
-                    r.RelativeItem().Text("ProjectX · Work Hours").FontSize(7).FontColor("#a09aaf");
+                    r.RelativeItem().Text($"ProjectX · {t["sheet"]}").FontSize(7).FontColor("#a09aaf");
                     r.AutoItem().Text(x =>
                     {
-                        x.Span("Page ").FontSize(7).FontColor("#888888");
+                        x.Span(t["page"] + " ").FontSize(7).FontColor("#888888");
                         x.CurrentPageNumber().FontSize(7);
-                        x.Span(" of ").FontSize(7);
+                        x.Span(" " + t["of"] + " ").FontSize(7);
                         x.TotalPages().FontSize(7);
                     });
                 });

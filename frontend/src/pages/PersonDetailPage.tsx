@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -683,8 +684,7 @@ export function PersonDetailPage() {
                   )}
 
                   <PmField label={t('personDetail.validFrom')}>
-                    <input
-                      type="date"
+                    <DateInput
                       value={formData.validFrom}
                       max={maxValidityDate()}
                       onChange={(e) => setFormData((p) => ({ ...p, validFrom: e.target.value }))}
@@ -692,8 +692,7 @@ export function PersonDetailPage() {
                     />
                   </PmField>
                   <PmField label={t('personDetail.validTo')}>
-                    <input
-                      type="date"
+                    <DateInput
                       value={formData.validTo}
                       max={maxValidityDate()}
                       onChange={(e) => setFormData((p) => ({ ...p, validTo: e.target.value }))}

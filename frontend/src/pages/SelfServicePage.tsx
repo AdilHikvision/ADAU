@@ -1,3 +1,4 @@
+import { DateInput } from '../components/atoms/DateInput'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -641,8 +642,7 @@ export function SelfServicePage() {
               <>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.date')}</label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={corrDate}
                     onChange={(e) => setCorrDate(e.target.value)}
                     required
@@ -668,8 +668,7 @@ export function SelfServicePage() {
                   <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">
                     {needsEndDate ? t('selfService.startDate') : t('common.date')}
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={reqDateTime.slice(0, 10)}
                     onChange={(e) => setReqDateTime(`${e.target.value}T09:00`)}
                     required
@@ -679,8 +678,7 @@ export function SelfServicePage() {
                 {needsEndDate && (
                   <div className="space-y-1.5">
                     <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('selfService.endDate')}</label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={reqEndDateTime.slice(0, 10)}
                       onChange={(e) => setReqEndDateTime(`${e.target.value}T18:00`)}
                       required

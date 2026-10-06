@@ -1,3 +1,4 @@
+import { DateInput } from '../../components/atoms/DateInput'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
@@ -314,11 +315,11 @@ export function ParkingTariffsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>{t('common.from')}</label>
-                <input type="date" className={fieldCls} value={sf.startDate} onChange={(e) => setSf({ ...sf, startDate: e.target.value })} />
+                <DateInput className={fieldCls} value={sf.startDate} onChange={(e) => setSf({ ...sf, startDate: e.target.value })} />
               </div>
               <div>
                 <label className={lbl}>{t('parking.sub.endDate')}</label>
-                <input type="date" className={fieldCls} value={sf.endDate} onChange={(e) => setSf({ ...sf, endDate: e.target.value })} />
+                <DateInput className={fieldCls} value={sf.endDate} onChange={(e) => setSf({ ...sf, endDate: e.target.value })} />
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm font-bold text-text-dark cursor-pointer">

@@ -1,3 +1,4 @@
+import { DateInput } from '../../components/atoms/DateInput'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
@@ -97,7 +98,7 @@ export function ParkingBlacklistPage() {
               {REASONS.map((r) => <option key={r} value={r}>{t(`parking.cfg.reason.${r}`)}</option>)}
             </select>
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('parking.blacklist.note')} />
-            <input type="date" className={fieldCls} title={t('parking.blacklist.validTo')}
+            <DateInput className={fieldCls} title={t('parking.blacklist.validTo')}
               value={validTo} onChange={(e) => setValidTo(e.target.value)} />
             <Button icon="block" isLoading={saving} disabled={!plate.trim()} onClick={add}>{t('common.add')}</Button>
           </div>

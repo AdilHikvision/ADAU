@@ -1,3 +1,4 @@
+import { DateInput } from '../../components/atoms/DateInput'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppLayout } from '../../components/templates'
@@ -105,11 +106,11 @@ export function ParkingHistoryPage() {
           </div>
           <div className="space-y-1">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.from')}</label>
-            <input type="date" className={fieldCls} value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DateInput className={fieldCls} value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
           <div className="space-y-1">
             <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('common.to')}</label>
-            <input type="date" className={fieldCls} value={to} onChange={(e) => setTo(e.target.value)} />
+            <DateInput className={fieldCls} value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           {tab === 'history' ? (
             <div className="flex-1 min-w-40">
