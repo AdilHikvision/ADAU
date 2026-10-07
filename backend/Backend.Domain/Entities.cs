@@ -468,7 +468,8 @@ public sealed class AttendancePermission : BaseEntity
     public TimeSpan FromTime { get; set; }
     public TimeSpan ToTime { get; set; }
     public string? Reason { get; set; }
-    /// <summary>Отображать в отчёте (и вычитать часы отсутствия из totalHours).</summary>
+    /// <summary>Вычитать часы отсутствия из totalHours. Имя историческое: само разрешение
+    /// показывается в отчётах всегда, флаг управляет только вычетом.</summary>
     public bool ShowInReport { get; set; } = true;
 }
 

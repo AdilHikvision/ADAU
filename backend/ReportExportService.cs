@@ -28,10 +28,26 @@ public sealed record AttendancePeriodRow(
     bool IsAbsent,
     bool OnLeave,
     string? LeaveType,
-    // Почасовое разрешение дня (только с ShowInReport): «13:00–15:00» и причина.
+    // Почасовое разрешение дня: «13:00–15:00» и причина. Показывается всегда.
     string? PermissionTime = null,
-    string? PermissionReason = null)
+    string? PermissionReason = null,
+    // Коррекция: время с устройств до правки («08:55–17:10») и её причина.
+    string? CorrectionOriginal = null,
+    string? CorrectionComment = null)
 {
+    /// <summary>
+    /// Строки колонки «Скорректировано»: «Да», под ним исходное время и причина.
+    /// День без коррекции — пусто.
+    /// </summary>
+    public IReadOnlyList<string> CorrectionLines(ReportText t)
+    {
+        if (!Corrected) return [];
+        var lines = new List<string> { t["yes"] };
+        if (!string.IsNullOrWhiteSpace(CorrectionOriginal)) lines.Add(CorrectionOriginal);
+        if (!string.IsNullOrWhiteSpace(CorrectionComment)) lines.Add(CorrectionComment.Trim());
+        return lines;
+    }
+
     /// <summary>Статус дня на языке отчёта — общий для Excel и PDF.</summary>
     public string StatusLabel(ReportText t) =>
         IsDayOff ? t["dayOff"]
@@ -385,9 +401,12 @@ public static class ExcelReportBuilder
 
             new(AttendanceColumns.Corrected, t["corrected"], (c, r, _) =>
             {
-                c.Value = r.Corrected ? t["yes"] : "";
+                // «Да», ниже исходное время и причина — в одной ячейке с переносом строк.
+                c.Value = string.Join("\n", r.CorrectionLines(t));
+                c.Style.Alignment.WrapText = true;
+                c.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
                 c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            }),
+            }, MinWidth: 22),
 
             new(AttendanceColumns.Permission, t["permission"], (c, r, _) =>
             {
@@ -980,8 +999,14 @@ public static class PdfReportBuilder
                     : r.CheckInUtc.HasValue ? "#0e9f6e"
                     : Ink)),
 
-            new(AttendanceColumns.Corrected, t["correctedShort"], 32, false, (c, r) =>
-                c.AlignCenter().Text(r.Corrected ? t["yes"] : "").FontSize(7.5f).FontColor(Muted)),
+            // «Да», ниже исходное время и причина — колонка шире прежней «Да/пусто».
+            new(AttendanceColumns.Corrected, t["corrected"], 2, true, (c, r) =>
+                c.Column(col =>
+                {
+                    var lines = r.CorrectionLines(t);
+                    for (int i = 0; i < lines.Count; i++)
+                        col.Item().Text(lines[i]).FontSize(i == 0 ? 7.5f : 6.5f).FontColor(i == 0 ? Ink : Muted);
+                })),
 
             new(AttendanceColumns.Permission, t["permission"], 2, true, (c, r) =>
                 c.Text(r.PermissionLabel).FontSize(7.5f).FontColor("#0284c7")),

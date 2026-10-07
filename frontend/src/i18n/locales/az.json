@@ -2858,8 +2858,8 @@
     "permissionTitle": "İcazə — {{name}}",
     "permissionFromTime": "Başlanğıc",
     "permissionToTime": "Son",
-    "permissionShowInReport": "Hesabatda göstər",
-    "permissionDeductHint": "İcazə saatları ümumi iş vaxtından çıxılacaq. Seçilməzsə, icazə yalnız qeyd olunur.",
+    "permissionShowInReport": "İş saatlarından çıx",
+    "permissionDeductHint": "İcazə saatları ümumi iş vaxtından çıxılır. Seçilməzsə, saatlar dəyişmir. İcazə özü hesabatlarda hər iki halda göstərilir.",
     "columns": {
       "button": "Sütunlar",
       "showAll": "Bütün sütunları göstər",

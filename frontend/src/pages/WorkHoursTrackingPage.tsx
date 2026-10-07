@@ -300,6 +300,8 @@ interface PeriodRow {
   lateMinutes: number | null
   earlyLeaveMinutes: number | null
   corrected: boolean
+  correctionComment?: string | null
+  correctionOriginal?: string | null
   permissionHours?: number | null
   permissionShowInReport?: boolean | null
   permissionFrom?: string | null
@@ -329,6 +331,7 @@ interface DailySummary {
   earlyLeaveMinutes: number | null
   corrected: boolean
   correctionComment: string | null
+  correctionOriginal?: string | null
   permissionFrom?: string | null
   permissionTo?: string | null
   permissionHours?: number | null
@@ -337,11 +340,26 @@ interface DailySummary {
 }
 
 /**
- * Ячейка «Разрешение»: время отсутствия и причина. Как и в Excel/PDF/письме, показываются
- * только разрешения с отметкой «показывать в отчёте».
+ * Ячейка «Скорректировано»: «Да», под ним время с устройств до правки и причина —
+ * то же, что в Excel, PDF и письме. День без коррекции — прочерк.
  */
-function PermissionCell({ row }: { row: Pick<DailySummary, 'permissionFrom' | 'permissionTo' | 'permissionReason' | 'permissionShowInReport'> }) {
-  if (!row.permissionShowInReport || !row.permissionFrom || !row.permissionTo) return <span className="text-text-light">—</span>
+function CorrectionCell({ row, yes }: { row: { corrected: boolean; correctionOriginal?: string | null; correctionComment?: string | null }; yes: string }) {
+  if (!row.corrected) return <span className="text-text-light">—</span>
+  return (
+    <span className="block text-xs leading-tight">
+      <span className="block font-bold text-amber-700">{yes}</span>
+      {row.correctionOriginal && <span className="block font-mono text-text-dark">{row.correctionOriginal}</span>}
+      {row.correctionComment && <span className="block text-text-light">{row.correctionComment}</span>}
+    </span>
+  )
+}
+
+/**
+ * Ячейка «Разрешение»: время отсутствия и причина. Показывается всегда, как и в
+ * Excel/PDF/письме; вычитать ли эти часы из отработанных — отдельная галочка.
+ */
+function PermissionCell({ row }: { row: Pick<DailySummary, 'permissionFrom' | 'permissionTo' | 'permissionReason'> }) {
+  if (!row.permissionFrom || !row.permissionTo) return <span className="text-text-light">—</span>
   return (
     <span className="text-xs">
       <span className="font-mono font-bold text-sky-600">{row.permissionFrom}–{row.permissionTo}</span>
@@ -1901,6 +1919,7 @@ useEffect(() => {
                         {showCol('early') && <th className="px-5 py-3 text-right">{t('workHours.early')}</th>}
                         {showCol('overtime') && <th className="px-5 py-3 text-right">{t('workHours.ot')}</th>}
                         {showCol('permission') && <th className="px-5 py-3 text-left">{t('workHours.columns.names.permission')}</th>}
+                        {showCol('corrected') && <th className="px-5 py-3 text-left">{t('workHours.columns.names.corrected')}</th>}
                         <th className="px-5 py-3 text-right">{t('common.edit')}</th>
                       </tr>
                     </thead>
@@ -1943,6 +1962,7 @@ useEffect(() => {
                           {showCol('early') && <td className="px-5 py-3 text-right">{(d.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(d.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>}
                           {showCol('overtime') && <td className="px-5 py-3 text-right">{d.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(d.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>}
                           {showCol('permission') && <td className="px-5 py-3"><PermissionCell row={d} /></td>}
+                          {showCol('corrected') && <td className="px-5 py-3"><CorrectionCell row={d} yes={t('common.yes')} /></td>}
                           <td className="px-5 py-3 text-right space-x-2 whitespace-nowrap">
                             <button type="button" onClick={() => openCorrection(d)} className="text-[10px] font-black uppercase tracking-wider text-primary hover:underline">{t('common.edit')}</button>
                             <button type="button" onClick={() => openPermission(d)} className={`text-[10px] font-black uppercase tracking-wider hover:underline ${(d.permissionHours ?? 0) > 0 ? 'text-sky-600' : 'text-text-light'}`}>
@@ -2037,6 +2057,7 @@ useEffect(() => {
                                 <th className="px-5 py-2 text-right">{t('workHours.early')}</th>
                                 <th className="px-5 py-2 text-right">{t('workHours.ot')}</th>
                                 {showCol('permission') && <th className="px-5 py-2 text-left">{t('workHours.columns.names.permission')}</th>}
+                                {showCol('corrected') && <th className="px-5 py-2 text-left">{t('workHours.columns.names.corrected')}</th>}
                               </tr>
                             </thead>
                             <tbody>
@@ -2064,6 +2085,7 @@ useEffect(() => {
                                   <td className="px-5 py-2 text-right">{(r.earlyLeaveMinutes ?? 0) > 0 ? <span className="text-orange-600 font-bold">-{formatMinutesHM(r.earlyLeaveMinutes!)}</span> : <span className="text-text-light">—</span>}</td>
                                   <td className="px-5 py-2 text-right">{r.overtimeHours > 0 ? <span className="text-purple-700 font-bold">+{formatHM(r.overtimeHours)}</span> : <span className="text-text-light">—</span>}</td>
                                   {showCol('permission') && <td className="px-5 py-2"><PermissionCell row={r} /></td>}
+                                  {showCol('corrected') && <td className="px-5 py-2"><CorrectionCell row={r} yes={t('common.yes')} /></td>}
                                 </tr>
                               ))}
                             </tbody>

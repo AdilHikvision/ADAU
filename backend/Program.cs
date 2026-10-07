@@ -4968,6 +4968,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, str
             earlyLeaveMinutes = d.EarlyLeaveMinutes,
             corrected = d.Corrected,
             correctionComment = corr?.Comment,
+            correctionOriginal = d.Corrected ? OriginalPunchLabel(stat?.First, stat?.Last) : null,
             permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
             permissionTo = perm?.ToTime.ToString(@"hh\:mm"),
             permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
@@ -5090,6 +5091,8 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 lateMinutes = d.LateMinutes,
                 earlyLeaveMinutes = d.EarlyLeaveMinutes,
                 corrected = d.Corrected,
+                correctionComment = d.Corrected ? corr?.Comment : null,
+                correctionOriginal = d.Corrected ? OriginalPunchLabel(rawFirst, rawLast) : null,
                 permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
                 permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport,
                 permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
@@ -5936,6 +5939,19 @@ static IQueryable<Employee> ApplyPeopleFilter(IQueryable<Employee> query, IReadO
         || (e.HousingBlockId != null && housingScope.Contains(e.HousingBlockId.Value)));
 }
 
+/// <summary>
+/// Время прихода–ухода с устройств до коррекции, в локальном времени сервера:
+/// «08:55–17:10». Отметки не было — на её месте прочерк.
+/// </summary>
+static string OriginalPunchLabel(DateTime? firstUtc, DateTime? lastUtc)
+{
+    static string Hhmm(DateTime? utc) => utc.HasValue
+        ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm")
+        : "—";
+    // Одна отметка за день — это только приход, ухода устройство не видело.
+    return $"{Hhmm(firstUtc)}–{Hhmm(lastUtc.HasValue && lastUtc != firstUtc ? lastUtc : null)}";
+}
+
 static List<Guid> ParseIdList(Guid? single, string? csv)
 {
     var ids = new List<Guid>();
@@ -6080,9 +6096,12 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 d.IsAbsent,
                 d.OnLeave,
                 d.LeaveType,
-                // В отчёт попадают только разрешения с ShowInReport — как и вычет часов.
-                perm is { ShowInReport: true } ? $"{perm.FromTime:hh\\:mm}–{perm.ToTime:hh\\:mm}" : null,
-                perm is { ShowInReport: true } ? perm.Reason : null));
+                // Разрешение показывается в отчёте всегда; ShowInReport решает только вычет часов.
+                perm is not null ? $"{perm.FromTime:hh\\:mm}–{perm.ToTime:hh\\:mm}" : null,
+                perm?.Reason,
+                // Коррекция: что показали устройства до правки и зачем правили.
+                d.Corrected ? OriginalPunchLabel(rawFirst, rawLast) : null,
+                d.Corrected ? corr?.Comment : null));
         }
     }
     return (rows, employees.Count == 1 ? singleEmpName : null);
@@ -7643,13 +7662,14 @@ app.MapPost("/api/reports/attendance/send-email", async (
         (AttendanceColumns.Hours, text["hours"], true),
         (AttendanceColumns.Late, text["lateEmail"], true),
         (AttendanceColumns.Permission, text["permission"], false),
+        (AttendanceColumns.Corrected, text["corrected"], false),
     }.Where(c => visible.Contains(c.Key)).ToArray();
 
-    // Разрешения, отмеченные «показывать в отчёте»: время и причина в своей колонке.
+    // Разрешения дня: время и причина в своей колонке (независимо от вычета часов).
     var emailFromDate = DateOnly.FromDateTime(fromUtc);
     var emailToDate = DateOnly.FromDateTime(toUtc);
     var permByEmpDate = (await dbContext.AttendancePermissions.AsNoTracking()
-            .Where(p => p.ShowInReport && p.Date >= emailFromDate && p.Date <= emailToDate)
+            .Where(p => p.Date >= emailFromDate && p.Date <= emailToDate)
             .ToListAsync(cancellationToken))
         .ToDictionary(p => (p.EmployeeId, p.Date));
     if (emailCols.Length == 0)
@@ -7667,8 +7687,12 @@ app.MapPost("/api/reports/attendance/send-email", async (
             var empKeyLower = (e.EmployeeNo ?? "").Trim().ToLowerInvariant();
             DateTime? first = null; DateTime? last = null;
             if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { first = stat.First; last = stat.Last; }
+            // Коррекция в письме: «Да», исходное время с устройств и причина.
+            var corrStr = "—";
             if (corrByEmpDate.TryGetValue((e.Id, day), out var corr))
             {
+                corrStr = System.Net.WebUtility.HtmlEncode(text["yes"] + " · " + OriginalPunchLabel(first, last)
+                    + (string.IsNullOrWhiteSpace(corr.Comment) ? "" : " · " + corr.Comment.Trim()));
                 if (corr.CheckInUtc.HasValue) first = corr.CheckInUtc.Value;
                 if (corr.CheckOutUtc.HasValue) last = corr.CheckOutUtc.Value;
             }
@@ -7701,6 +7725,7 @@ app.MapPost("/api/reports/attendance/send-email", async (
                     AttendanceColumns.CheckOut => coStr,
                     AttendanceColumns.Hours => hoursStr,
                     AttendanceColumns.Permission => permStr,
+                    AttendanceColumns.Corrected => corrStr,
                     _ => lateStr,
                 };
                 tableRows.Append($"<td style='padding:5px 10px;border-bottom:1px solid #e2e8f0{(c.Center ? ";text-align:center" : "")}'>{value}</td>");

@@ -2866,8 +2866,8 @@
     "permissionTitle": "Absence permission — {{name}}",
     "permissionFromTime": "From",
     "permissionToTime": "To",
-    "permissionShowInReport": "Show in report",
-    "permissionDeductHint": "Absence hours will be deducted from total worked time. If unchecked, the permission is only recorded.",
+    "permissionShowInReport": "Deduct from worked hours",
+    "permissionDeductHint": "Absence hours are deducted from total worked time. If unchecked, hours stay unchanged. The permission itself is shown in reports either way.",
     "columns": {
       "button": "Columns",
       "showAll": "Show all columns",
