@@ -171,6 +171,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
             entity.HasKey(x => x.Id);
             entity.Property(x => x.FirstName).HasMaxLength(150).IsRequired();
             entity.Property(x => x.LastName).HasMaxLength(150).IsRequired();
+            entity.Property(x => x.MiddleName).HasMaxLength(150);
+            entity.Property(x => x.Fin).HasMaxLength(16);
+            entity.Property(x => x.StaffRate).HasPrecision(4, 2).HasDefaultValue(1m);
             entity.Property(x => x.EmployeeNo).HasMaxLength(32);
             entity.Property(x => x.ExternalId).HasMaxLength(64).HasColumnName("ExternalId");
             entity.Property(x => x.Gender).HasMaxLength(16);

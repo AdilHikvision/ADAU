@@ -1679,6 +1679,9 @@
     }
   },
   "people": {
+    "middleName": "Ata adı",
+    "finPlaceholder": "7 simvol",
+    "staffRate": "Ştat",
     "allBlocks": "Bütün fakültələr",
     "bulk": {
       "selectPage": "Səhifəni seç",
@@ -2003,6 +2006,32 @@
     }
   },
   "companyTab": {
+    "tree": {
+      "search": "Şöbə axtar…",
+      "expandAll": "Hamısını aç",
+      "collapseAll": "Hamısını bağla",
+      "subdepartments": "{{count}} alt şöbə",
+      "withSubdepartments": "alt şöbələrlə birlikdə: {{count}}",
+      "addSubdepartment": "Alt şöbə əlavə et",
+      "noMatches": "Şöbə tapılmadı.",
+      "visitors": "Ziyarətçilər"
+    },
+    "members": {
+      "count": "{{count}} işçi",
+      "title": "«{{name}}» şöbəsinin işçiləri",
+      "inDepartment": "Şöbədə",
+      "withoutDepartment": "Şöbəsiz",
+      "search": "Ad və ya nömrə ilə axtar…",
+      "selectShown": "Hamısını seç ({{count}})",
+      "clearSelection": "Seçimi ləğv et",
+      "remove": "Şöbədən çıxar ({{count}})",
+      "add": "Şöbəyə əlavə et ({{count}})",
+      "emptyIn": "Şöbədə hələ işçi yoxdur.",
+      "emptyFree": "Bütün işçilər artıq şöbələrə bölünüb.",
+      "noMatches": "Heç kim tapılmadı.",
+      "inactive": "qeyri-aktiv",
+      "hint": "Sağda yalnız şöbəsi olmayan işçilər göstərilir. Başqa şöbədən olan işçini onun kartında köçürün."
+    },
     "failedToLoad": "Yüklənə bilmədi",
     "configurationFailed": "Konfiqurasiya alınmadı",
     "saveFailed": "Yadda saxlanılmadı",

@@ -2526,6 +2526,32 @@ app.MapDelete("/api/departments/{id:guid}", async (Guid id, AppDbContext dbConte
     return Results.NoContent();
 }).RequireAuthorization("Departments.Manage");
 
+// Состав отдела из карточки структуры: добавить сотрудников без отдела и снять
+// назначенных. Отдел на устройства не пишется — это только запись в базе.
+// Добавляются лишь те, у кого отдела нет: чужого сотрудника отсюда не перетянуть.
+app.MapPut("/api/departments/{id:guid}/employees", async (Guid id, DepartmentMembersRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    if (!await dbContext.Departments.AnyAsync(x => x.Id == id, cancellationToken))
+        return Results.NotFound();
+
+    var add = request.Add ?? [];
+    var remove = request.Remove ?? [];
+    var now = DateTime.UtcNow;
+
+    var toAdd = await dbContext.Employees
+        .Where(e => e.Kind == PersonKind.Employee && add.Contains(e.Id) && e.DepartmentId == null)
+        .ToListAsync(cancellationToken);
+    foreach (var e in toAdd) { e.DepartmentId = id; e.UpdatedUtc = now; }
+
+    var toRemove = await dbContext.Employees
+        .Where(e => e.Kind == PersonKind.Employee && remove.Contains(e.Id) && e.DepartmentId == id)
+        .ToListAsync(cancellationToken);
+    foreach (var e in toRemove) { e.DepartmentId = null; e.UpdatedUtc = now; }
+
+    await dbContext.SaveChangesAsync(cancellationToken);
+    return Results.Ok(new { added = toAdd.Count, removed = toRemove.Count });
+}).RequireAuthorization("Departments.Manage").RequireAuthorization("Employees.Manage");
+
 // ─── Структура ЖКХ: комплекс → корпус → подъезд → этаж. Дерево произвольной глубины,
 // как у департаментов. К узлу привязывается жилец (Employee с Kind = Resident). ───
 app.MapGet("/api/housing-blocks", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
@@ -2773,6 +2799,8 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
     var lastName = (request.LastName ?? "").Trim();
     if (string.IsNullOrEmpty(firstName) || string.IsNullOrEmpty(lastName))
         return Results.BadRequest(new { message = "FirstName и LastName обязательны." });
+    if (request.StaffRate is decimal createRate && !IsValidStaffRate(createRate))
+        return Results.BadRequest(new { message = "StaffRate: допустимы 1, 0.75 или 0.5." });
 
     var entityId = Guid.NewGuid();
     var employeeNo = entityId.ToString("N")[..32];
@@ -2812,6 +2840,10 @@ app.MapPost("/api/employees", async (CreateEmployeeRequest request, AppDbContext
         PositionId = request.PositionId,
         CompanyId = companyId,
         ExternalId = string.IsNullOrWhiteSpace(request.ExternalId) ? null : request.ExternalId.Trim(),
+        // Отчество, FIN и ставка — поля работников ADAU; у студентов не хранятся.
+        MiddleName = kind == PersonKind.Employee ? Trimmed(request.MiddleName) : null,
+        Fin = kind == PersonKind.Employee ? Trimmed(request.Fin)?.ToUpperInvariant() : null,
+        StaffRate = kind == PersonKind.Employee ? request.StaffRate ?? 1m : 1m,
         CreatedUtc = DateTime.UtcNow
     };
     dbContext.Employees.Add(entity);
@@ -2924,6 +2956,24 @@ app.MapPut("/api/employees/{id:guid}", async (
     }
     entity.WorkScheduleId = request.WorkScheduleId;
     if (request.ExternalId != null) entity.ExternalId = string.IsNullOrWhiteSpace(request.ExternalId) ? null : request.ExternalId.Trim();
+    // Отчество, FIN и ставка — поля работников ADAU. null — поле не прислано, не трогаем;
+    // пустая строка очищает. Студенту они не нужны и сбрасываются.
+    if (entity.Kind == PersonKind.Employee)
+    {
+        if (request.MiddleName != null) entity.MiddleName = Trimmed(request.MiddleName);
+        if (request.Fin != null) entity.Fin = Trimmed(request.Fin)?.ToUpperInvariant();
+        if (request.StaffRate is decimal rate)
+        {
+            if (!IsValidStaffRate(rate)) return Results.BadRequest(new { message = "StaffRate: допустимы 1, 0.75 или 0.5." });
+            entity.StaffRate = rate;
+        }
+    }
+    else
+    {
+        entity.MiddleName = null;
+        entity.Fin = null;
+        entity.StaffRate = 1m;
+    }
     entity.UpdatedUtc = DateTime.UtcNow;
 
     // Self-service account management
@@ -11808,6 +11858,9 @@ static string PersonKindName(PersonKind kind) => kind == PersonKind.Resident ? "
 /// <summary>Пустая строка от формы означает «поле очищено», а не «пробелы».</summary>
 static string? Trimmed(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+/// <summary>Штатная ставка работника ADAU: допустимы только 1, 0.75 и 0.5.</summary>
+static bool IsValidStaffRate(decimal rate) => rate is 1m or 0.75m or 0.5m;
+
 static EmployeeResponse MapEmployeeResponse(Employee e)
 {
     var accessNames = e.AccessLevels?.Select(a => a.AccessLevel?.Name).Where(n => n != null).Cast<string>().ToArray() ?? [];
@@ -11829,7 +11882,7 @@ static EmployeeDetailResponse MapEmployeeDetailResponse(Employee e)
     var faces = (e.Faces ?? []).Select(f => new FaceRef(f.Id, f.FDID)).ToArray();
     var fingerprints = (e.Fingerprints ?? []).Select(f => new FingerprintRef(f.Id, f.FingerIndex)).ToArray();
     var irises = (e.Irises ?? []).Select(i => new IrisRef(i.Id, i.IrisIndex)).ToArray();
-    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, e.CompanyId, accessLevels, cards, faces, fingerprints, irises, e.SelfServiceEnabled, e.SelfServiceEmail, e.WorkScheduleId, e.WorkSchedule?.Name, e.ExternalId, pos, PersonKindName(e.Kind), e.Apartment, e.HousingBlockId, e.HousingBlock?.Name);
+    return new EmployeeDetailResponse(e.Id, e.FirstName, e.LastName, e.EmployeeNo, e.Gender, e.ValidFromUtc, e.ValidToUtc, e.IsActive, e.OnlyVerify, dept, e.CompanyId, accessLevels, cards, faces, fingerprints, irises, e.SelfServiceEnabled, e.SelfServiceEmail, e.WorkScheduleId, e.WorkSchedule?.Name, e.ExternalId, pos, PersonKindName(e.Kind), e.Apartment, e.HousingBlockId, e.HousingBlock?.Name, e.MiddleName, e.Fin, e.StaffRate);
 }
 
 static VisitorResponse MapVisitorResponse(Visitor v)
@@ -12080,6 +12133,8 @@ public sealed record LogSyncManualRequest(string FromDate, string ToDate);
 
 public sealed record CreateDepartmentRequest(string Name, string? Description, Guid? ParentId, Guid? CompanyId);
 public sealed record UpdateDepartmentRequest(string Name, string? Description, int? SortOrder, Guid? ParentId, Guid? CompanyId);
+/// <summary>Изменение состава отдела: Add — сотрудники без отдела, Remove — снять из отдела.</summary>
+public sealed record DepartmentMembersRequest(Guid[]? Add, Guid[]? Remove);
 public sealed record DepartmentResponse(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int ChildrenCount, int EmployeesCount, int VisitorsCount);
 public sealed record DepartmentTreeItem(Guid Id, string Name, string? Description, int SortOrder, Guid? ParentId, Guid? CompanyId, int EmployeesCount, int VisitorsCount);
 public sealed record CreatePositionRequest(string Name, string? Description);
@@ -12096,10 +12151,10 @@ public sealed record HousingBlockResponse(Guid Id, string Name, string? Descript
 public sealed record CreateHousingBlockRequest(string Name, string? Description, Guid? ParentId);
 public sealed record UpdateHousingBlockRequest(string Name, string? Description, Guid? ParentId, int? SortOrder);
 
-public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
+public sealed record CreateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null, string? MiddleName = null, string? Fin = null, decimal? StaffRate = null);
 /// <summary>Тело запроса на выдачу доступа к самообслуживанию; email — из формы, если он ещё не сохранён.</summary>
 public sealed record SelfServiceAccessRequest(string? Email);
-public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null);
+public sealed record UpdateEmployeeRequest(string FirstName, string LastName, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, bool? OnlyVerify, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId, bool? SelfServiceEnabled, string? SelfServiceEmail, Guid? WorkScheduleId, string? ExternalId = null, Guid? PositionId = null, string? Kind = null, string? Apartment = null, Guid? HousingBlockId = null, string? MiddleName = null, string? Fin = null, decimal? StaffRate = null);
 public sealed record CreateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record UpdateVisitorRequest(string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool? IsActive, Guid[]? AccessLevelIds, Guid? DepartmentId, Guid? CompanyId);
 public sealed record SyncToDevicesRequest(Guid[]? DeviceIds);
@@ -12113,7 +12168,7 @@ public sealed record ImportFromDevicesRequest(Guid[]? DeviceIds, Guid? CompanyId
 public sealed record DepartmentRef(Guid Id, string Name);
 public sealed record PositionRef(Guid Id, string Name);
 public sealed record EmployeeResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, Guid? WorkScheduleId = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
-public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null);
+public sealed record EmployeeDetailResponse(Guid Id, string FirstName, string LastName, string? EmployeeNo, string? Gender, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, bool OnlyVerify, DepartmentRef? Department, Guid? CompanyId, AccessLevelRef[] AccessLevels, CardRef[] Cards, FaceRef[] Faces, FingerprintRef[] Fingerprints, IrisRef[] Irises, bool SelfServiceEnabled = false, string? SelfServiceEmail = null, Guid? WorkScheduleId = null, string? WorkScheduleName = null, string? ExternalId = null, PositionRef? Position = null, string Kind = "employee", string? Apartment = null, Guid? HousingBlockId = null, string? HousingBlockName = null, string? MiddleName = null, string? Fin = null, decimal StaffRate = 1m);
 /// <summary>QrCardNo — номер QR-пропуска гостя (карта с CardType "qrCode"), если он выдан.
 /// По нему список строит пропуск-билет, не запрашивая карточку целиком.</summary>
 public sealed record VisitorResponse(Guid Id, string FirstName, string LastName, string? DocumentNumber, DateTime? ValidFromUtc, DateTime? ValidToUtc, bool IsActive, string[] AccessLevelNames, DepartmentRef? Department, Guid? CompanyId, Guid? PrimaryFaceId, int CardsCount, int FacesCount, int FingerprintsCount, int IrisesCount, string? QrCardNo);

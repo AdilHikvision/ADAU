@@ -1679,6 +1679,9 @@
     }
   },
   "people": {
+    "middleName": "Middle name",
+    "finPlaceholder": "7 characters",
+    "staffRate": "Staff rate",
     "allBlocks": "All faculties",
     "bulk": {
       "selectPage": "Select page",
@@ -2003,6 +2006,32 @@
     }
   },
   "companyTab": {
+    "tree": {
+      "search": "Search department…",
+      "expandAll": "Expand all",
+      "collapseAll": "Collapse all",
+      "subdepartments": "{{count}} sub-depts",
+      "withSubdepartments": "with sub-departments: {{count}}",
+      "addSubdepartment": "Add sub-department",
+      "noMatches": "No departments found.",
+      "visitors": "Visitors"
+    },
+    "members": {
+      "count": "{{count}} staff",
+      "title": "Employees of “{{name}}”",
+      "inDepartment": "In department",
+      "withoutDepartment": "Without department",
+      "search": "Search by name or number…",
+      "selectShown": "Select all ({{count}})",
+      "clearSelection": "Clear selection",
+      "remove": "Remove from department ({{count}})",
+      "add": "Add to department ({{count}})",
+      "emptyIn": "No employees in this department yet.",
+      "emptyFree": "Every employee already has a department.",
+      "noMatches": "Nobody found.",
+      "inactive": "inactive",
+      "hint": "The right list shows only employees without a department. To move someone from another department, use their profile."
+    },
     "failedToLoad": "Failed to load",
     "configurationFailed": "Configuration failed",
     "saveFailed": "Save failed",

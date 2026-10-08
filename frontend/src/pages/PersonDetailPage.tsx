@@ -13,6 +13,7 @@ import { useModule } from '../context/ModuleContext'
 import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
 import { maxValidityDate } from '../lib/validity'
 import { PM_CARD, PM_INPUT, PM_TITLE, PmField } from './personFormUi'
+import { EmployeeExtraFields, type EmployeeExtra } from './EmployeeExtraFields'
 
 import { apiRequest, getHubUrl } from '../lib/api'
 import { newId } from '../lib/id'
@@ -50,6 +51,9 @@ interface PersonDetail {
   lastName: string
   documentNumber?: string | null
   externalId?: string | null
+  middleName?: string | null
+  fin?: string | null
+  staffRate?: number | null
   gender?: string | null
   validFromUtc?: string | null
   validToUtc?: string | null
@@ -151,6 +155,8 @@ export function PersonDetailPage() {
     housingBlockId: null as string | null,
   })
   const [housingBlocks, setHousingBlocks] = useState<HousingBlockItem[]>([])
+  // Отчество, FIN и ставка — только у работников (не у студентов).
+  const [extra, setExtra] = useState<EmployeeExtra>({ middleName: '', fin: '', staffRate: 1 })
   // Жилец лежит в тех же записях, что и работник (type === 'employee'),
   // отличает его поле kind — оно же прячет отдел, должность, табель и смены.
   const isResident = formData.kind === 'resident'
@@ -305,6 +311,11 @@ export function PersonDetailPage() {
       apartment: detail.apartment ?? '',
       housingBlockId: detail.housingBlockId ?? null,
     })
+    setExtra({
+      middleName: detail.middleName ?? '',
+      fin: detail.fin ?? '',
+      staffRate: detail.staffRate ?? 1,
+    })
     // Пароль намеренно НЕ восстанавливаем из detail: в GET его нет и быть не должно —
     // он показывается один раз, сразу после создания аккаунта (см. handleSave).
   }, [detail, companies, companyMode])
@@ -406,6 +417,10 @@ export function PersonDetailPage() {
             kind: formData.kind,
             apartment: isResident ? formData.apartment.trim() : null,
             housingBlockId: isResident ? formData.housingBlockId : null,
+            // Пустая строка очищает поле на сервере; у студента сервер их сбрасывает сам.
+            middleName: extra.middleName.trim(),
+            fin: extra.fin.trim(),
+            staffRate: extra.staffRate,
           }),
         })
         showSyncWarnings(res)
@@ -599,6 +614,8 @@ export function PersonDetailPage() {
                       className={PM_INPUT}
                     />
                   </PmField>
+
+                  {type === 'employee' && !isResident && <EmployeeExtraFields value={extra} onChange={setExtra} />}
 
                   {/* Работника и жильца можно переключать: на устройствах это ничего не меняет,
                       меняется только вкладка и набор доступных полей. */}

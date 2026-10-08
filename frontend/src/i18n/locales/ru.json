@@ -1690,6 +1690,9 @@
     }
   },
   "people": {
+    "middleName": "Отчество",
+    "finPlaceholder": "7 символов",
+    "staffRate": "Штат",
     "allBlocks": "Все факультеты",
     "bulk": {
       "selectPage": "Выбрать страницу",
@@ -2014,6 +2017,32 @@
     }
   },
   "companyTab": {
+    "tree": {
+      "search": "Поиск отдела…",
+      "expandAll": "Развернуть все",
+      "collapseAll": "Свернуть все",
+      "subdepartments": "{{count}} подотд.",
+      "withSubdepartments": "вместе с подотделами: {{count}}",
+      "addSubdepartment": "Добавить подотдел",
+      "noMatches": "Отделы не найдены.",
+      "visitors": "Посетители"
+    },
+    "members": {
+      "count": "{{count}} сотр.",
+      "title": "Сотрудники отдела «{{name}}»",
+      "inDepartment": "В отделе",
+      "withoutDepartment": "Без отдела",
+      "search": "Поиск по имени или номеру…",
+      "selectShown": "Выбрать всех ({{count}})",
+      "clearSelection": "Снять выбор",
+      "remove": "Снять из отдела ({{count}})",
+      "add": "Добавить в отдел ({{count}})",
+      "emptyIn": "В отделе пока нет сотрудников.",
+      "emptyFree": "Все сотрудники уже распределены по отделам.",
+      "noMatches": "Никого не найдено.",
+      "inactive": "неактивен",
+      "hint": "Справа только сотрудники без отдела. Сотрудника из другого отдела переводят в его карточке."
+    },
     "failedToLoad": "Не удалось загрузить",
     "configurationFailed": "Ошибка конфигурации",
     "saveFailed": "Не удалось сохранить",

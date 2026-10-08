@@ -191,6 +191,12 @@ public sealed class Employee : BaseEntity
     public HousingBlock? HousingBlock { get; set; }
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
+    /// <summary>ADAU, работники: отчество. Необязательное.</summary>
+    public string? MiddleName { get; set; }
+    /// <summary>ADAU, работники: FIN — персональный идентификационный номер из удостоверения личности. Необязательный.</summary>
+    public string? Fin { get; set; }
+    /// <summary>ADAU, работники: штатная ставка — 1, 0.75 или 0.5. По умолчанию полная ставка.</summary>
+    public decimal StaffRate { get; set; } = 1m;
     /// <summary>Идентификатор для устройств Hikvision (employeeNo, до 32 байт). Генерируется системой автоматически из Id.</summary>
     public string? EmployeeNo { get; set; }
     /// <summary>Пользовательский внешний идентификатор (таб. №), редактируется вручную в UI (метка «ID»). Не путать с внутренним Id или EmployeeNo. Nullable, необязательный, неуникальный.</summary>

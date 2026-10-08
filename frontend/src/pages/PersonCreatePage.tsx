@@ -12,6 +12,7 @@ import { PersonBiometricsStep } from './PersonBiometricsStep'
 import { useModule } from '../context/ModuleContext'
 import { flattenHousingBlocks, loadHousingBlocks, type HousingBlockItem } from './housingBlocks'
 import { PM_INPUT, PmField } from './personFormUi'
+import { EmployeeExtraFields, type EmployeeExtra } from './EmployeeExtraFields'
 
 /* ═══ Страница добавления сотрудника / посетителя — мастер из двух шагов на одном экране.
    Шаг 1 — данные (вёрстка по референс-дизайну: иллюстрация + сетка полей).
@@ -72,6 +73,8 @@ export function PersonCreatePage() {
     housingBlockId: null as string | null,
   })
   const [housingBlocks, setHousingBlocks] = useState<HousingBlockItem[]>([])
+  // Отчество, FIN и ставка — только у работников (не у студентов и посетителей).
+  const [extra, setExtra] = useState<EmployeeExtra>({ middleName: '', fin: '', staffRate: 1 })
 
   const loadAccessLevels = useCallback(async () => {
     if (!token) return
@@ -165,6 +168,11 @@ export function PersonCreatePage() {
             kind: isResident ? 'resident' : 'employee',
             apartment: isResident ? formData.apartment.trim() || null : null,
             housingBlockId: isResident ? formData.housingBlockId : null,
+            ...(isResident ? {} : {
+              middleName: extra.middleName.trim() || null,
+              fin: extra.fin.trim() || null,
+              staffRate: extra.staffRate,
+            }),
           })
         : JSON.stringify({ ...common, documentNumber: null })
 
@@ -259,6 +267,8 @@ export function PersonCreatePage() {
                 className={PM_INPUT}
               />
             </PmField>
+
+            {isEmployee && !isResident && <EmployeeExtraFields value={extra} onChange={setExtra} />}
 
             {isEmployee && (
               <PmField label={t('people.gender')}>
