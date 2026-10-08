@@ -19,7 +19,7 @@ import './monthly-hours.css'
    Mok/demo YOXDUR. "Tab. №" sütunu işçinin ExternalId-ni göstərir.
    ═══════════════════════════════════════════════════════════════ */
 interface MhDayCell { hours: number; criterionKey: string }
-interface MhEmp { no: string; externalId: string; fullname: string; position: string; department: string; days: Record<string, MhDayCell>; totalDays: string; totalHours: string; extraDays: string; extraHours: string }
+interface MhEmp { no: string; externalId: string; fullname: string; position: string; staffRate?: number | null; department: string; days: Record<string, MhDayCell>; totalDays: string; totalHours: string; extraDays: string; extraHours: string }
 // Cari ay (YYYY-MM) — tabel həmişə bu ayla açılır.
 const MH_DEFAULT_MONTH = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') })()
 interface MhApiResponse { month: string; employees: MhEmp[] }
@@ -110,6 +110,8 @@ function MonthlyHoursTable({ month, filterQuery }: { month: string; filterQuery:
   const paged = pageSlice(rows, mhPage)
   const sumHours = rows.reduce((s, e) => s + (parseInt(e.totalHours, 10) || 0), 0)
   const dayNums = Array.from({ length: nDays }, (_, k) => k + 1)
+  // Ştat — только когда в табеле есть работники со ставкой (у студентов её нет).
+  const showRate = rows.some((e) => e.staffRate != null)
   // Defaults + server siyahısı: serverdə çatışmayan açar (məs. absent) default-dan gəlir, boş xana qalmır.
   const critMap = new Map<string, AttCriterion>()
   MH_CRIT_DEFAULTS.forEach((c) => critMap.set(c.key, c))
@@ -147,6 +149,7 @@ function MonthlyHoursTable({ month, filterQuery }: { month: string; filterQuery:
                   <th className="stick wf-mh-c-no" rowSpan={2}>{t('workHours.tabel.colTabNo')}</th>
                   <th className="stick wf-mh-c-name" rowSpan={2}>{t('workHours.tabel.colFullName')}</th>
                   <th className="wf-mh-c-pos" rowSpan={2}>{t('workHours.tabel.colPosition')}</th>
+                  {showRate && <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colStaffRate')}</th>}
                   <th className="wf-mh-c-dept" rowSpan={2}>{t('workHours.tabel.colDept')}</th>
                   <th colSpan={nDays}>{t('workHours.tabel.colDays')}</th>
                   <th className="wf-mh-total" rowSpan={2}>{t('workHours.tabel.colTotalDays')}</th>
@@ -165,6 +168,7 @@ function MonthlyHoursTable({ month, filterQuery }: { month: string; filterQuery:
                     <td className="stick wf-mh-c-no">{e.externalId || '—'}</td>
                     <td className="stick wf-mh-c-name">{e.fullname}</td>
                     <td className="wf-mh-c-pos">{e.position}</td>
+                    {showRate && <td className="wf-mh-total">{e.staffRate ?? ''}</td>}
                     <td className="wf-mh-c-dept">{e.department}</td>
                     {dayNums.map((dd) => {
                       const cell = e.days[String(dd)]
@@ -302,6 +306,7 @@ interface PeriodRow {
   corrected: boolean
   correctionComment?: string | null
   correctionOriginal?: string | null
+  staffRate?: number | null
   permissionHours?: number | null
   permissionShowInReport?: boolean | null
   permissionFrom?: string | null
@@ -332,6 +337,7 @@ interface DailySummary {
   corrected: boolean
   correctionComment: string | null
   correctionOriginal?: string | null
+  staffRate?: number | null
   permissionFrom?: string | null
   permissionTo?: string | null
   permissionHours?: number | null
@@ -621,7 +627,7 @@ function computeShiftHours(start: string, end: string): number | null {
  * колонок больше, чем на экране.
  */
 const ATTENDANCE_COLUMNS = [
-  'employee', 'department', 'date', 'schedule', 'shift', 'checkIn', 'checkOut',
+  'employee', 'department', 'staffRate', 'date', 'schedule', 'shift', 'checkIn', 'checkOut',
   'hours', 'norm', 'overtime', 'late', 'early', 'status', 'corrected', 'permission',
 ] as const
 type AttendanceColumn = typeof ATTENDANCE_COLUMNS[number]
@@ -1909,6 +1915,7 @@ useEffect(() => {
                     <thead>
                       <tr className="text-[10px] font-black text-text-light uppercase tracking-widest border-b border-border">
                         {showCol('employee') && <th className="px-5 py-3 text-left">{t('workHours.employee')}</th>}
+                        {showCol('staffRate') && !students && <th className="px-5 py-3 text-center">{t('workHours.columns.names.staffRate')}</th>}
                         {showCol('schedule') && <th className="px-5 py-3 text-left">{t('workHours.schedule')}</th>}
                         {showCol('shift') && <th className="px-5 py-3 text-left">{t('workHours.shift')}</th>}
                         {showCol('checkIn') && <th className="px-5 py-3 text-left">{t('workHours.checkIn')}</th>}
@@ -1932,6 +1939,7 @@ useEffect(() => {
                             {d.corrected && <span className="ml-1 text-[9px] font-black text-amber-700 uppercase tracking-widest" title={d.correctionComment ?? t('workHours.corrected')}>✎</span>}
                           </td>
                           )}
+                          {showCol('staffRate') && !students && <td className="px-5 py-3 text-center font-mono text-text-dark">{d.staffRate ?? '—'}</td>}
                           {showCol('schedule') && (
                           <td className="px-5 py-3 text-text-light text-xs">
                             {d.isDayOff ? <span className="text-slate-400 italic">{t('workHours.dayOff')}</span> : (d.scheduleName ?? '—')}
@@ -1984,9 +1992,9 @@ useEffect(() => {
           {/* Weekly / Monthly Period Reports — per-employee per-day breakdown + totals */}
           {(tab === 'weekly' || tab === 'monthly') && (() => {
             const range = tab === 'weekly' ? weekRange(weeklyAnchor) : monthRange(monthlyAnchor)
-            const byEmp = new Map<string, { name: string; rows: PeriodRow[] }>()
+            const byEmp = new Map<string, { name: string; staffRate: number | null; rows: PeriodRow[] }>()
             for (const r of period) {
-              if (!byEmp.has(r.employeeId)) byEmp.set(r.employeeId, { name: r.employeeName ?? '—', rows: [] })
+              if (!byEmp.has(r.employeeId)) byEmp.set(r.employeeId, { name: r.employeeName ?? '—', staffRate: r.staffRate ?? null, rows: [] })
               byEmp.get(r.employeeId)!.rows.push(r)
             }
             // For each employee: filter rows by subTab, then hide employee if no rows match
@@ -2032,7 +2040,14 @@ useEffect(() => {
                     return (
                       <div key={emp.name} className="bg-surface rounded-2xl shadow-sm overflow-hidden">
                         <div className="px-5 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-sm font-black text-text-dark">{emp.name}</p>
+                          <p className="text-sm font-black text-text-dark">
+                            {emp.name}
+                            {showCol('staffRate') && emp.staffRate != null && (
+                              <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-text-light">
+                                {t('workHours.columns.names.staffRate')}: <span className="text-text-dark">{emp.staffRate}</span>
+                              </span>
+                            )}
+                          </p>
                           <div className="flex flex-wrap gap-4 text-[10px] font-black text-text-light uppercase tracking-widest">
                             <span>{t('workHours.present')}: <strong className="text-text-dark">{present}/{workRows.length}</strong></span>
                             {absent > 0 && <span>{t('workHours.absentLabel')}: <strong className="text-error-text">{absent}d</strong></span>}

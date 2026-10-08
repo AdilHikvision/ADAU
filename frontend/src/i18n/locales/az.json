@@ -2670,6 +2670,7 @@
       "colTabNo": "Tab. №",
       "colFullName": "Soyadı, adı, atasının adı",
       "colPosition": "Vəzifəsi",
+      "colStaffRate": "Ştat",
       "colDept": "Struktur bölməsi",
       "colDays": "Ayın günləri",
       "colTotalDays": "Cəmi gün",
@@ -2908,6 +2909,7 @@
         "early": "Tez çıxma",
         "status": "Status",
         "corrected": "Düzəliş edilib",
+        "staffRate": "Ştat",
         "permission": "İcazə"
       }
     }

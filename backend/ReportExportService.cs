@@ -33,7 +33,9 @@ public sealed record AttendancePeriodRow(
     string? PermissionReason = null,
     // Коррекция: время с устройств до правки («08:55–17:10») и её причина.
     string? CorrectionOriginal = null,
-    string? CorrectionComment = null)
+    string? CorrectionComment = null,
+    // Штатная ставка работника (1 / 0.75 / 0.5). У студентов null — колонки нет.
+    decimal? StaffRate = null)
 {
     /// <summary>
     /// Строки колонки «Скорректировано»: «Да», под ним исходное время и причина.
@@ -98,7 +100,7 @@ public sealed class ReportText
         ["schedule"] = "Schedule", ["shiftStart"] = "Shift Start", ["shiftEnd"] = "Shift End",
         ["checkIn"] = "Check In", ["checkOut"] = "Check Out", ["hours"] = "Hours", ["norm"] = "Norm",
         ["overtime"] = "Overtime", ["late"] = "Late (h)", ["early"] = "Early (h)", ["status"] = "Status",
-        ["corrected"] = "Corrected", ["permission"] = "Permission",
+        ["corrected"] = "Corrected", ["permission"] = "Permission", ["staffRate"] = "Staff rate",
         ["shiftStartShort"] = "Shift S", ["shiftEndShort"] = "Shift E", ["inShort"] = "In", ["outShort"] = "Out",
         ["overtimeShort"] = "OT", ["lateShort"] = "Late h", ["earlyShort"] = "Early h", ["correctedShort"] = "Corr.",
         ["lateEmail"] = "Late",
@@ -114,7 +116,7 @@ public sealed class ReportText
         ["schedule"] = "График", ["shiftStart"] = "Начало смены", ["shiftEnd"] = "Конец смены",
         ["checkIn"] = "Приход", ["checkOut"] = "Уход", ["hours"] = "Часы", ["norm"] = "Норма",
         ["overtime"] = "Сверхурочно", ["late"] = "Опоздание (ч)", ["early"] = "Ранний уход (ч)", ["status"] = "Статус",
-        ["corrected"] = "Исправлено", ["permission"] = "Разрешение",
+        ["corrected"] = "Исправлено", ["permission"] = "Разрешение", ["staffRate"] = "Штат",
         ["shiftStartShort"] = "Нач.", ["shiftEndShort"] = "Кон.", ["inShort"] = "Приход", ["outShort"] = "Уход",
         ["overtimeShort"] = "Сверх.", ["lateShort"] = "Опозд.", ["earlyShort"] = "Ран.ух.", ["correctedShort"] = "Испр.",
         ["lateEmail"] = "Опоздание",
@@ -130,7 +132,7 @@ public sealed class ReportText
         ["schedule"] = "Qrafik", ["shiftStart"] = "Növbə başlanğıcı", ["shiftEnd"] = "Növbə sonu",
         ["checkIn"] = "Giriş", ["checkOut"] = "Çıxış", ["hours"] = "Saat", ["norm"] = "Norma",
         ["overtime"] = "Əlavə iş", ["late"] = "Gecikmə (s)", ["early"] = "Erkən çıxış (s)", ["status"] = "Status",
-        ["corrected"] = "Düzəliş", ["permission"] = "İcazə",
+        ["corrected"] = "Düzəliş", ["permission"] = "İcazə", ["staffRate"] = "Ştat",
         ["shiftStartShort"] = "Başl.", ["shiftEndShort"] = "Son", ["inShort"] = "Giriş", ["outShort"] = "Çıxış",
         ["overtimeShort"] = "Əlavə", ["lateShort"] = "Gecik.", ["earlyShort"] = "Erkən", ["correctedShort"] = "Düz.",
         ["lateEmail"] = "Gecikmə",
@@ -151,6 +153,7 @@ public static class AttendanceColumns
 {
     public const string Employee = "employee";
     public const string Department = "department";
+    public const string StaffRate = "staffRate";
     public const string Date = "date";
     public const string Schedule = "schedule";
     public const string Shift = "shift";
@@ -167,7 +170,7 @@ public static class AttendanceColumns
 
     public static readonly string[] All =
     [
-        Employee, Department, Date, Schedule, Shift, CheckIn, CheckOut,
+        Employee, Department, StaffRate, Date, Schedule, Shift, CheckIn, CheckOut,
         Hours, Norm, Overtime, Late, Early, Status, Corrected, Permission,
     ];
 
@@ -202,6 +205,13 @@ public sealed record SchedulePlannerRow(
 
 // Строка месячного табеля (İş vaxtının aylıq uçotu): дни месяца → (часы, ключ критерия).
 public sealed record MonthlyTabelCell(double Hours, string Key);
+
+/// <summary>Штатная ставка для отчётов: «1», «0.75», «0.5»; нет ставки — пусто.</summary>
+public static class StaffRateFormat
+{
+    public static string Text(decimal? rate) =>
+        rate is decimal r ? r.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "";
+}
 public sealed record MonthlyTabelRow(
     string No,
     string ExternalId,
@@ -212,7 +222,9 @@ public sealed record MonthlyTabelRow(
     int TotalDays,
     int TotalHours,
     int ExtraDays,
-    int ExtraHours);
+    int ExtraHours,
+    // Штатная ставка работника; у студентов null — колонки «Ştat» в табеле нет.
+    decimal? StaffRate = null);
 
 /// <summary>Стиль критерия табеля (из attendance_criteria, с дефолтами для отсутствующих ключей).</summary>
 public sealed record TabelCritStyle(string Key, string Label, string Letter, string Color, string DisplayMode, bool Enabled);
@@ -307,6 +319,13 @@ public static class ExcelReportBuilder
             {
                 c.Value = r.Department ?? "";
                 c.Style.Font.FontColor = XLColor.FromHtml(Muted);
+            }),
+
+            new(AttendanceColumns.StaffRate, t["staffRate"], (c, r, _) =>
+            {
+                if (r.StaffRate is decimal rate) c.Value = (double)rate;
+                c.Style.NumberFormat.Format = "0.##";
+                c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             }),
 
             new(AttendanceColumns.Date, t["date"], (c, r, _) =>
@@ -415,7 +434,8 @@ public static class ExcelReportBuilder
             }, MinWidth: 16),
         };
 
-        var cols = all.Where(c => visible.Contains(c.Key)).ToList();
+        var hasRates = rows.Any(r => r.StaffRate != null);
+        var cols = all.Where(c => visible.Contains(c.Key) && (c.Key != AttendanceColumns.StaffRate || hasRates)).ToList();
         // Все колонки сняты — печатать пустой лист не из чего, оставляем набор по умолчанию.
         if (cols.Count == 0) cols = all;
         int nCols = cols.Count;
@@ -732,7 +752,11 @@ public static class ExcelReportBuilder
         ws.Cell("A1").Style.Font.FontSize = 14;
 
         int headerRow = 3;
+        // Ştat — только когда в табеле есть работники со ставкой (у студентов её нет).
+        bool showRate = rows.Any(r => r.StaffRate != null);
+        int lead = showRate ? 6 : 5; // колонок до первого дня месяца
         var headers = new List<string> { "S/S", "Tab. №", "Soyadı, adı, atasının adı", "Vəzifəsi", "Struktur bölməsi" };
+        if (showRate) headers.Insert(4, "Ştat");
         for (int d = 1; d <= daysInMonth; d++) headers.Add(d.ToString());
         headers.AddRange(["Cəmi gün", "Cəmi saat", "Əlavə gün", "Əlavə saat"]);
         for (int i = 0; i < headers.Count; i++)
@@ -749,7 +773,7 @@ public static class ExcelReportBuilder
         {
             var dow = new DateTime(year, month, d).DayOfWeek;
             if (dow == DayOfWeek.Saturday || dow == DayOfWeek.Sunday)
-                ws.Cell(headerRow, 5 + d).Style.Fill.BackgroundColor = XLColor.FromHtml("#8e77e8");
+                ws.Cell(headerRow, lead + d).Style.Fill.BackgroundColor = XLColor.FromHtml("#8e77e8");
         }
 
         int row = headerRow + 1;
@@ -760,10 +784,16 @@ public static class ExcelReportBuilder
             ws.Cell(row, 2).Value = r.ExternalId;
             ws.Cell(row, 3).Value = r.Fullname;
             ws.Cell(row, 4).Value = r.Position;
-            ws.Cell(row, 5).Value = r.Department;
+            if (showRate)
+            {
+                if (r.StaffRate is decimal rate) ws.Cell(row, 5).Value = (double)rate;
+                ws.Cell(row, 5).Style.NumberFormat.Format = "0.##";
+                ws.Cell(row, 5).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            ws.Cell(row, lead).Value = r.Department;
             for (int d = 1; d <= daysInMonth; d++)
             {
-                var cell = ws.Cell(row, 5 + d);
+                var cell = ws.Cell(row, lead + d);
                 cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
                 if (!r.Days.TryGetValue(d, out var dayCell)) continue;
                 var (text, color) = TabelCellContent(dayCell, crit);
@@ -772,10 +802,10 @@ public static class ExcelReportBuilder
                 cell.Style.Font.FontColor = XLColor.FromHtml(color);
                 cell.Style.Fill.BackgroundColor = TabelTint(color);
             }
-            ws.Cell(row, 5 + daysInMonth + 1).Value = r.TotalDays;
-            ws.Cell(row, 5 + daysInMonth + 2).Value = r.TotalHours;
-            ws.Cell(row, 5 + daysInMonth + 3).Value = r.ExtraDays;
-            ws.Cell(row, 5 + daysInMonth + 4).Value = r.ExtraHours;
+            ws.Cell(row, lead + daysInMonth + 1).Value = r.TotalDays;
+            ws.Cell(row, lead + daysInMonth + 2).Value = r.TotalHours;
+            ws.Cell(row, lead + daysInMonth + 3).Value = r.ExtraDays;
+            ws.Cell(row, lead + daysInMonth + 4).Value = r.ExtraHours;
             row++;
         }
 
@@ -784,8 +814,8 @@ public static class ExcelReportBuilder
         {
             ws.Cell(row, 3).Value = "TOTAL";
             ws.Cell(row, 3).Style.Font.Bold = true;
-            ws.Cell(row, 5 + daysInMonth + 2).Value = rows.Sum(r => r.TotalHours);
-            ws.Cell(row, 5 + daysInMonth + 2).Style.Font.Bold = true;
+            ws.Cell(row, lead + daysInMonth + 2).Value = rows.Sum(r => r.TotalHours);
+            ws.Cell(row, lead + daysInMonth + 2).Style.Font.Bold = true;
             ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f0f0");
         }
 
@@ -810,8 +840,8 @@ public static class ExcelReportBuilder
         ws.Column(3).Width = 28;
         ws.Column(4).Width = 16;
         ws.Column(5).Width = 16;
-        for (int d = 1; d <= daysInMonth; d++) ws.Column(5 + d).Width = 4.5;
-        for (int i = 1; i <= 4; i++) ws.Column(5 + daysInMonth + i).Width = 9;
+        for (int d = 1; d <= daysInMonth; d++) ws.Column(lead + d).Width = 4.5;
+        for (int i = 1; i <= 4; i++) ws.Column(lead + daysInMonth + i).Width = 9;
         ws.SheetView.FreezeColumns(3);
         ws.SheetView.FreezeRows(headerRow);
 
@@ -946,6 +976,9 @@ public static class PdfReportBuilder
             new(AttendanceColumns.Department, t["department"], 2, true, (c, r) =>
                 c.Text(r.Department ?? "").FontSize(7.5f).FontColor(Muted)),
 
+            new(AttendanceColumns.StaffRate, t["staffRate"], 32, false, (c, r) =>
+                c.AlignCenter().Text(StaffRateFormat.Text(r.StaffRate)).FontSize(7.5f).FontColor(Ink)),
+
             new(AttendanceColumns.Date, t["date"], 52, false, (c, r) =>
                 c.AlignCenter().Text(r.Date.ToString("dd.MM.yy")).FontSize(7.5f)
                     .FontColor(r.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? "#8e77e8" : Ink)),
@@ -1012,7 +1045,8 @@ public static class PdfReportBuilder
                 c.Text(r.PermissionLabel).FontSize(7.5f).FontColor("#0284c7")),
         };
 
-        var cols = all.Where(c => visible.Contains(c.Key)).ToList();
+        var hasRates = rows.Any(r => r.StaffRate != null);
+        var cols = all.Where(c => visible.Contains(c.Key) && (c.Key != AttendanceColumns.StaffRate || hasRates)).ToList();
         if (cols.Count == 0) cols = all;
 
         // Фон «чипа» статуса зависит от строки, поэтому он берётся отдельно от текста.
@@ -1367,6 +1401,8 @@ public static class PdfReportBuilder
         int year, int month,
         IReadOnlyDictionary<string, TabelCritStyle> crit)
     {
+        // Ştat — только когда в табеле есть работники со ставкой (у студентов её нет).
+        bool showRate = rows.Any(r => r.StaffRate != null);
         int daysInMonth = DateTime.DaysInMonth(year, month);
 
         var doc = Document.Create(container =>
@@ -1396,6 +1432,7 @@ public static class PdfReportBuilder
                             c.ConstantColumn(44);  // Tab №
                             c.RelativeColumn(4);   // Name
                             c.RelativeColumn(2);   // Position
+                            if (showRate) c.ConstantColumn(26); // Ştat
                             c.RelativeColumn(2);   // Department
                             for (int d = 0; d < daysInMonth; d++) c.ConstantColumn(19);
                             c.ConstantColumn(30);  // Cəmi gün
@@ -1409,7 +1446,7 @@ public static class PdfReportBuilder
                             void Head(string txt, string bg = "#6e56cf")
                                 => h.Cell().Background(bg).Padding(2).AlignCenter()
                                     .Text(txt).FontColor("#ffffff").Bold().FontSize(6.5f);
-                            Head("S/S"); Head("Tab.№"); Head("Soyadı, adı, atasının adı"); Head("Vəzifəsi"); Head("Şöbə");
+                            Head("S/S"); Head("Tab.№"); Head("Soyadı, adı, atasının adı"); Head("Vəzifəsi"); if (showRate) Head("Ştat"); Head("Şöbə");
                             for (int d = 1; d <= daysInMonth; d++)
                             {
                                 var dow = new DateTime(year, month, d).DayOfWeek;
@@ -1428,6 +1465,7 @@ public static class PdfReportBuilder
                             table.Cell().Background(bg).Padding(2).Text(r.ExternalId).FontSize(6.5f);
                             table.Cell().Background(bg).Padding(2).Text(r.Fullname).FontSize(6.5f);
                             table.Cell().Background(bg).Padding(2).Text(r.Position).FontSize(6.5f);
+                            if (showRate) table.Cell().Background(bg).Padding(2).AlignCenter().Text(StaffRateFormat.Text(r.StaffRate)).FontSize(6.5f);
                             table.Cell().Background(bg).Padding(2).Text(r.Department).FontSize(6.5f);
                             for (int d = 1; d <= daysInMonth; d++)
                             {

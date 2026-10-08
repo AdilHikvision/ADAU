@@ -5019,6 +5019,7 @@ app.MapGet("/api/attendance/daily", async (DateTime? date, Guid? employeeId, str
             corrected = d.Corrected,
             correctionComment = corr?.Comment,
             correctionOriginal = d.Corrected ? OriginalPunchLabel(stat?.First, stat?.Last) : null,
+            staffRate = e.Kind == PersonKind.Employee ? e.StaffRate : (decimal?)null,
             permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
             permissionTo = perm?.ToTime.ToString(@"hh\:mm"),
             permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
@@ -5143,6 +5144,7 @@ app.MapGet("/api/attendance/period", async (DateTime? from, DateTime? to, Guid? 
                 corrected = d.Corrected,
                 correctionComment = d.Corrected ? corr?.Comment : null,
                 correctionOriginal = d.Corrected ? OriginalPunchLabel(rawFirst, rawLast) : null,
+                staffRate = e.Kind == PersonKind.Employee ? e.StaffRate : (decimal?)null,
                 permissionHours = perm is null ? (double?)null : Math.Round(permHours, 2),
                 permissionShowInReport = perm is null ? (bool?)null : perm.ShowInReport,
                 permissionFrom = perm?.FromTime.ToString(@"hh\:mm"),
@@ -5298,7 +5300,8 @@ static async Task<List<MonthlyTabelRow>> BuildMonthlyTabelRowsAsync(int y, int m
             workedDays,
             (int)Math.Round(totalHours),
             workedDays - scheduledDays,
-            (int)Math.Round(totalHours) - (int)Math.Round(scheduledNorm)));
+            (int)Math.Round(totalHours) - (int)Math.Round(scheduledNorm),
+            e.Kind == PersonKind.Employee ? e.StaffRate : null));
     }
     return rows;
 }
@@ -5324,6 +5327,7 @@ app.MapGet("/api/reports/work-hours/monthly", async (string? month, Guid? employ
         externalId = r.ExternalId,
         fullname = r.Fullname,
         position = r.Position,
+        staffRate = r.StaffRate,
         department = r.Department,
         days = r.Days.ToDictionary(kv => kv.Key.ToString(), kv => new { hours = kv.Value.Hours, criterionKey = kv.Value.Key }),
         totalDays = r.TotalDays.ToString(),
@@ -5388,6 +5392,8 @@ app.MapPost("/api/reports/work-hours/monthly/send-email", async (
     var crit = await LoadTabelCritAsync(dbContext, ct);
     var companyName = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", ct))?.Value ?? "ProjectX";
     int daysInMonth = DateTime.DaysInMonth(y, mo);
+    // Ştat — только когда в табеле есть работники со ставкой (у студентов её нет).
+    var showRate = rows.Any(r => r.StaffRate != null);
 
     static string TintHex(string hex)
     {
@@ -5402,7 +5408,9 @@ app.MapPost("/api/reports/work-hours/monthly/send-email", async (
 
     var sb = new System.Text.StringBuilder();
     sb.Append("<thead><tr>");
-    foreach (var hdr in new[] { "S/S", "Tab.№", "Soyadı, adı, atasının adı", "Vəzifəsi", "Şöbə" })
+    foreach (var hdr in showRate
+        ? new[] { "S/S", "Tab.№", "Soyadı, adı, atasının adı", "Vəzifəsi", "Ştat", "Şöbə" }
+        : new[] { "S/S", "Tab.№", "Soyadı, adı, atasının adı", "Vəzifəsi", "Şöbə" })
         sb.Append($"<th style='padding:5px 8px;background:#4f46e5;color:#fff;text-align:left;font-size:10px'>{hdr}</th>");
     for (int d = 1; d <= daysInMonth; d++)
     {
@@ -5422,6 +5430,7 @@ app.MapPost("/api/reports/work-hours/monthly/send-email", async (
         sb.Append($"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;font-size:10px'>{System.Net.WebUtility.HtmlEncode(r.ExternalId)}</td>");
         sb.Append($"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;font-weight:bold;font-size:10px'>{System.Net.WebUtility.HtmlEncode(r.Fullname)}</td>");
         sb.Append($"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;font-size:10px'>{System.Net.WebUtility.HtmlEncode(r.Position)}</td>");
+        if (showRate) sb.Append($"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;font-size:10px;text-align:center'>{StaffRateFormat.Text(r.StaffRate)}</td>");
         sb.Append($"<td style='padding:4px 8px;border-bottom:1px solid #e2e8f0;font-size:10px'>{System.Net.WebUtility.HtmlEncode(r.Department)}</td>");
         for (int d = 1; d <= daysInMonth; d++)
         {
@@ -6151,7 +6160,8 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
                 perm?.Reason,
                 // Коррекция: что показали устройства до правки и зачем правили.
                 d.Corrected ? OriginalPunchLabel(rawFirst, rawLast) : null,
-                d.Corrected ? corr?.Comment : null));
+                d.Corrected ? corr?.Comment : null,
+                e.Kind == PersonKind.Employee ? e.StaffRate : null));
         }
     }
     return (rows, employees.Count == 1 ? singleEmpName : null);
@@ -7707,13 +7717,14 @@ app.MapPost("/api/reports/attendance/send-email", async (
         (AttendanceColumns.Date, text["date"], false),
         (AttendanceColumns.Employee, text["employee"], false),
         (AttendanceColumns.Department, text["department"], false),
+        (AttendanceColumns.StaffRate, text["staffRate"], true),
         (AttendanceColumns.CheckIn, text["checkIn"], true),
         (AttendanceColumns.CheckOut, text["checkOut"], true),
         (AttendanceColumns.Hours, text["hours"], true),
         (AttendanceColumns.Late, text["lateEmail"], true),
         (AttendanceColumns.Permission, text["permission"], false),
         (AttendanceColumns.Corrected, text["corrected"], false),
-    }.Where(c => visible.Contains(c.Key)).ToArray();
+    }.Where(c => visible.Contains(c.Key) && (c.Key != AttendanceColumns.StaffRate || reportKind == PersonKind.Employee)).ToArray();
 
     // Разрешения дня: время и причина в своей колонке (независимо от вычета часов).
     var emailFromDate = DateOnly.FromDateTime(fromUtc);
@@ -7771,6 +7782,7 @@ app.MapPost("/api/reports/attendance/send-email", async (
                     AttendanceColumns.Date => $"{day:dd.MM.yyyy}",
                     AttendanceColumns.Employee => name,
                     AttendanceColumns.Department => dept,
+                    AttendanceColumns.StaffRate => StaffRateFormat.Text(e.StaffRate),
                     AttendanceColumns.CheckIn => ciStr,
                     AttendanceColumns.CheckOut => coStr,
                     AttendanceColumns.Hours => hoursStr,
