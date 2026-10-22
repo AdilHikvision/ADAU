@@ -86,9 +86,41 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<ParkingSubscription> ParkingSubscriptions => Set<ParkingSubscription>();
     public DbSet<ParkingEvent> ParkingEvents => Set<ParkingEvent>();
 
+    public DbSet<DeviceSyncJob> DeviceSyncJobs => Set<DeviceSyncJob>();
+    public DbSet<DeviceSyncItem> DeviceSyncItems => Set<DeviceSyncItem>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<DeviceSyncJob>(entity =>
+        {
+            entity.ToTable("device_sync_jobs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Kind).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.SyncId).HasMaxLength(64);
+            entity.Property(x => x.CreatedBy).HasMaxLength(256);
+            // Активные задачи выбираются по статусу — индекс по (Status, CreatedUtc) для FIFO.
+            entity.HasIndex(x => new { x.Status, x.CreatedUtc });
+            entity.HasIndex(x => x.AccessLevelId);
+        });
+
+        builder.Entity<DeviceSyncItem>(entity =>
+        {
+            entity.ToTable("device_sync_items");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.EmployeeNo).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.Op).HasConversion<int>().IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>().IsRequired();
+            entity.Property(x => x.LastError).HasMaxLength(1024);
+            entity.Property(x => x.PayloadHash).HasMaxLength(128);
+            entity.HasOne(x => x.Job).WithMany(x => x.Items).HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
+            // Одна операция на (job, устройство, человек) — защита от дублей при повторной постановке.
+            entity.HasIndex(x => new { x.JobId, x.DeviceId, x.PersonId, x.Op }).IsUnique();
+            // Воркер устройства выбирает свои незавершённые элементы, готовые к попытке.
+            entity.HasIndex(x => new { x.JobId, x.DeviceId, x.Status, x.NextAttemptUtc });
+        });
 
         builder.Entity<Device>(entity =>
         {

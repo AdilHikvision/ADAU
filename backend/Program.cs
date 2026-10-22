@@ -1747,6 +1747,9 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     IDeviceActivityBroadcaster activityBroadcaster,
     IAccessLevelSyncTracker syncTracker,
     IServiceScopeFactory scopeFactory,
+    IDeviceSyncQueue syncQueue,
+    IOptions<DeviceSyncOptions> deviceSyncOptions,
+    ClaimsPrincipal currentUser,
     IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -1782,6 +1785,15 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     if (toAdd.Count > 0)
     {
         var peopleToSync = toAdd.ToList();
+        if (deviceSyncOptions.Value.UseQueue)
+        {
+            // Долговечная очередь: запись переживает рестарт/обрыв и продолжается сама,
+            // с повторами и verify. Прогресс идёт тем же syncId (PersonSyncProgress).
+            var createdBy = currentUser.FindFirst(ClaimTypes.Email)?.Value ?? currentUser.Identity?.Name;
+            await syncQueue.EnqueueAccessLevelWriteAsync(id, peopleToSync, createdBy, syncId, cancellationToken);
+        }
+        else
+        {
         syncTracker.Start(id, peopleToSync.Count, "writing");
         _ = Task.Run(async () =>
         {
@@ -1815,6 +1827,7 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
                     syncId, peopleToSync.Count, peopleToSync.Count, CancellationToken.None);
             }
         }, CancellationToken.None);
+        }
     }
 
     // warnings оставлены для старых клиентов: теперь предупреждения приходят событиями.
@@ -1958,6 +1971,9 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
     AppDbContext dbContext,
     IAccessLevelSyncTracker syncTracker,
     IServiceScopeFactory scopeFactory,
+    IDeviceSyncQueue syncQueue,
+    IOptions<DeviceSyncOptions> deviceSyncOptions,
+    ClaimsPrincipal currentUser,
     IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
@@ -1973,6 +1989,14 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
     if (personIds.Count == 0) return Results.BadRequest(new { message = "На уровне нет людей для перезаписи." });
 
     var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    if (deviceSyncOptions.Value.UseQueue)
+    {
+        // В очереди перезапись пока идёт как принудительная повторная запись (Force): UserInfo/SetUp
+        // и FDSetUp перезаписывают поверх. Стирание-перед-записью добавится вместе с Delete-операциями.
+        var createdBy = currentUser.FindFirst(ClaimTypes.Email)?.Value ?? currentUser.Identity?.Name;
+        await syncQueue.EnqueueAccessLevelRepushAsync(id, personIds, createdBy, syncId, cancellationToken);
+        return Results.Ok(new { count = personIds.Count, syncId, warnings = Array.Empty<string>() });
+    }
     syncTracker.Start(id, personIds.Count, "erasing");
     _ = Task.Run(async () =>
     {
@@ -2046,6 +2070,84 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
     }, CancellationToken.None);
 
     return Results.Ok(new { count = personIds.Count, syncId, warnings = Array.Empty<string>() });
+}).RequireAuthorization("AccessLevels.Manage");
+
+// ───────── Управление очередью записи на устройства (этап 1) ─────────
+// Статус задачи: статус, счётчики элементов и разбивка по устройствам (сколько готово/ошибок/ждёт).
+app.MapGet("/api/device-sync/jobs/{jobId:guid}", async (Guid jobId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+{
+    var job = await dbContext.DeviceSyncJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId, cancellationToken);
+    if (job is null) return Results.NotFound();
+
+    var perDevice = await dbContext.DeviceSyncItems.AsNoTracking()
+        .Where(i => i.JobId == jobId)
+        .GroupBy(i => i.DeviceId)
+        .Select(g => new
+        {
+            deviceId = g.Key,
+            total = g.Count(),
+            done = g.Count(i => i.Status == DeviceSyncItemStatus.Done),
+            failed = g.Count(i => i.Status == DeviceSyncItemStatus.Failed),
+            pending = g.Count(i => i.Status == DeviceSyncItemStatus.Pending || i.Status == DeviceSyncItemStatus.InProgress),
+            skipped = g.Count(i => i.Status == DeviceSyncItemStatus.Skipped),
+        })
+        .ToListAsync(cancellationToken);
+
+    var deviceNames = await dbContext.Devices.AsNoTracking()
+        .Where(d => perDevice.Select(p => p.deviceId).Contains(d.Id))
+        .Select(d => new { d.Id, d.Name })
+        .ToDictionaryAsync(d => d.Id, d => d.Name, cancellationToken);
+
+    return Results.Ok(new
+    {
+        job.Id,
+        job.SyncId,
+        kind = job.Kind.ToString(),
+        status = job.Status.ToString(),
+        job.AccessLevelId,
+        job.CreatedBy,
+        job.CreatedUtc,
+        job.StartedUtc,
+        job.FinishedUtc,
+        job.TotalItems,
+        job.DoneItems,
+        job.FailedItems,
+        job.SkippedItems,
+        devices = perDevice.Select(p => new
+        {
+            p.deviceId,
+            name = deviceNames.TryGetValue(p.deviceId, out var n) ? n : p.deviceId.ToString(),
+            p.total,
+            p.done,
+            p.failed,
+            p.pending,
+            p.skipped,
+        }),
+    });
+}).RequireAuthorization("AccessLevels.View");
+
+app.MapPost("/api/device-sync/jobs/{jobId:guid}/pause", async (Guid jobId, IDeviceSyncQueue queue, CancellationToken ct) =>
+{
+    await queue.PauseAsync(jobId, ct);
+    return Results.Ok();
+}).RequireAuthorization("AccessLevels.Manage");
+
+app.MapPost("/api/device-sync/jobs/{jobId:guid}/resume", async (Guid jobId, IDeviceSyncQueue queue, CancellationToken ct) =>
+{
+    await queue.ResumeAsync(jobId, ct);
+    return Results.Ok();
+}).RequireAuthorization("AccessLevels.Manage");
+
+app.MapPost("/api/device-sync/jobs/{jobId:guid}/cancel", async (Guid jobId, IDeviceSyncQueue queue, CancellationToken ct) =>
+{
+    await queue.CancelAsync(jobId, ct);
+    return Results.Ok();
+}).RequireAuthorization("AccessLevels.Manage");
+
+app.MapPost("/api/device-sync/jobs/{jobId:guid}/retry-failed", async (Guid jobId, IDeviceSyncQueue queue, CancellationToken ct) =>
+{
+    await queue.RetryFailedAsync(jobId, ct);
+    return Results.Ok();
 }).RequireAuthorization("AccessLevels.Manage");
 
 app.MapPost("/api/access-levels", async (CreateAccessLevelRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>

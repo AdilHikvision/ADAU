@@ -45,6 +45,7 @@ public static class DependencyInjection
         services.Configure<SystemMonitorOptions>(configuration.GetSection(SystemMonitorOptions.SectionName));
         services.Configure<SystemOptions>(configuration.GetSection(SystemOptions.SectionName));
         services.Configure<SadpOptions>(configuration.GetSection(SadpOptions.SectionName));
+        services.Configure<DeviceSyncOptions>(configuration.GetSection(DeviceSyncOptions.SectionName));
 
         services.AddDbContext<AppDbContext>(options => options
             .UseNpgsql(connectionBuilder.ConnectionString)
@@ -96,6 +97,8 @@ public static class DependencyInjection
         services.AddScoped<IDeviceDoorService, DeviceDoorService>();
         services.AddScoped<IDeviceDoorControlService, DeviceDoorControlService>();
         services.AddScoped<IDevicePersonSyncService, DevicePersonSyncService>();
+        services.AddScoped<IDeviceSyncQueue, DeviceSyncQueue>();
+        services.AddHostedService<DeviceSyncQueueProcessor>();
         services.AddScoped<IDevicePersonImportService, DevicePersonImportService>();
         services.AddScoped<CapturedCredentialStore>();
         // Станции регистрации: сессии захвата живут дольше запроса (ответ станции ждёт человека).

@@ -1445,3 +1445,103 @@ public sealed class AttendanceCriteria : BaseEntity
     public bool Enabled { get; set; } = true;
     public int SortOrder { get; set; }
 }
+
+// ───────────────────────── Очередь записи на устройства ─────────────────────────
+// Долговечная очередь массовой записи людей на устройства уровня доступа. Нужна, чтобы
+// многочасовая запись (тысячи людей × устройства) переживала рестарт бэкенда, офлайн
+// устройств и обрывы сети и продолжалась с места обрыва — вместо прежнего Task.Run в
+// памяти, который при обрыве терял половину людей без возможности дописать и свериться.
+
+public enum DeviceSyncJobKind
+{
+    /// <summary>Назначение уровня: записать людей на устройства уровня.</summary>
+    AccessLevelWrite = 1,
+    /// <summary>Снятие уровня: стереть людей с устройств.</summary>
+    AccessLevelErase = 2,
+    /// <summary>Перезапись: стереть и записать заново.</summary>
+    AccessLevelRepush = 3,
+}
+
+public enum DeviceSyncJobStatus
+{
+    Queued = 0,
+    Running = 1,
+    Paused = 2,
+    Completed = 3,
+    CompletedWithErrors = 4,
+    Cancelled = 5,
+}
+
+/// <summary>Операция над одним человеком на одном устройстве.</summary>
+public enum DeviceSyncItemOp
+{
+    /// <summary>Записать/обновить пользователя и его лицо/отпечаток/карту.</summary>
+    Upsert = 1,
+    /// <summary>Стереть пользователя с устройства.</summary>
+    Delete = 2,
+}
+
+public enum DeviceSyncItemStatus
+{
+    Pending = 0,
+    InProgress = 1,
+    Done = 2,
+    Failed = 3,
+    Skipped = 4,
+}
+
+/// <summary>Задача массовой записи/стирания по уровню доступа.</summary>
+public sealed class DeviceSyncJob : BaseEntity
+{
+    public DeviceSyncJobKind Kind { get; set; }
+    public DeviceSyncJobStatus Status { get; set; } = DeviceSyncJobStatus.Queued;
+
+    /// <summary>Идентификатор для SignalR-прогресса (PersonSyncProgress). Фронтенд слушает по нему.</summary>
+    public string SyncId { get; set; } = string.Empty;
+
+    /// <summary>Уровень доступа, к которому относится задача (для привязки прогресса к карточке).</summary>
+    public Guid? AccessLevelId { get; set; }
+    /// <summary>Кто запустил (email/логин) — для истории; не FK, чтобы не завязываться на Identity.</summary>
+    public string? CreatedBy { get; set; }
+
+    public DateTime? StartedUtc { get; set; }
+    public DateTime? FinishedUtc { get; set; }
+
+    /// <summary>Переписать всё, игнорируя diff (используется позже, на этапе diff).</summary>
+    public bool Force { get; set; }
+
+    // Денормализованные счётчики для UI/ETA (пересчитываются по ходу работы).
+    public int TotalItems { get; set; }
+    public int DoneItems { get; set; }
+    public int FailedItems { get; set; }
+    public int SkippedItems { get; set; }
+
+    public ICollection<DeviceSyncItem> Items { get; set; } = new List<DeviceSyncItem>();
+}
+
+/// <summary>Одна единица работы: один человек на одном устройстве. Идемпотентна —
+/// повторное выполнение безопасно (UserInfo/SetUp, FDSetUp перезаписывают).</summary>
+public sealed class DeviceSyncItem : BaseEntity
+{
+    public Guid JobId { get; set; }
+    public DeviceSyncJob? Job { get; set; }
+
+    public Guid DeviceId { get; set; }
+
+    /// <summary>Id человека (Employee; жилец живёт там же). Нужен, чтобы подгрузить его лицо/карту/отпечаток.</summary>
+    public Guid PersonId { get; set; }
+    /// <summary>employeeNo на терминале — зафиксирован при постановке в очередь (для Delete и verify).</summary>
+    public string EmployeeNo { get; set; } = string.Empty;
+
+    public DeviceSyncItemOp Op { get; set; } = DeviceSyncItemOp.Upsert;
+    public DeviceSyncItemStatus Status { get; set; } = DeviceSyncItemStatus.Pending;
+
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+    public DateTime? LastAttemptUtc { get; set; }
+    /// <summary>Не брать в работу раньше этого момента (бэкофф повторов, ожидание офлайн-устройства).</summary>
+    public DateTime? NextAttemptUtc { get; set; }
+
+    /// <summary>Хэш полезной нагрузки для diff (этап «писать только изменённое»). Пока не используется.</summary>
+    public string? PayloadHash { get; set; }
+}
