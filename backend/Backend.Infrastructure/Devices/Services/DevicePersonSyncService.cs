@@ -706,10 +706,12 @@ public sealed class DevicePersonSyncService(
 
                 var client = CreateClient(device);
                 var handled = 0;
-                // Пачками по сто: ISAPI принимает список employeeNo одним запросом, и для
-                // тысячи человек это сотня запросов вместо тысячи. Прошивки, которые список
-                // не понимают, отваливаются на первой же пачке — тогда идём поштучно.
-                foreach (var chunk in people.Chunk(100))
+                // Пачками по 50: ISAPI принимает список employeeNo одним запросом, и для
+                // тысячи человек это два десятка запросов вместо тысячи. Лимит списка в
+                // прошивке — 50 (UserInfoDetail/Delete maxSize); при 100 пачка не проходила
+                // и откатывалась на поштучное удаление — отсюда была медленная перезапись.
+                // Прошивки, которые список не понимают, отваливаются на первой пачке — тогда поштучно.
+                foreach (var chunk in people.Chunk(50))
                 {
                     token.ThrowIfCancellationRequested();
                     var batch = await DeletePeopleLadderAsync(chunk, client, token);

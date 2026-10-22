@@ -96,6 +96,8 @@ builder.Services.AddSignalR().AddJsonProtocol(options =>
 });
 builder.Services.AddSingleton<IDeviceStatusBroadcaster, DeviceStatusBroadcaster>();
 builder.Services.AddSingleton<IDeviceActivityBroadcaster, DeviceActivityBroadcaster>();
+// Реестр активных фоновых записей людей на устройства по уровням доступа (виден всем сессиям).
+builder.Services.AddSingleton<IAccessLevelSyncTracker, AccessLevelSyncTracker>();
 builder.Services.AddSingleton<INotificationService, NotificationService>();
 builder.Services.AddSingleton<IEmailService, EmailService>();
 builder.Services.AddSingleton<IEmailTemplateService, EmailTemplateService>();
@@ -1722,6 +1724,18 @@ app.MapGet("/api/access-levels/{id:guid}/people", async (
 
 // Назначить уровень сразу нескольким людям. Каждому изменившемуся человеку заново
 // раскатываем доступ на устройства — иначе запись в базе есть, а на турникете нет.
+// Активные фоновые записи по уровням: любая сессия (в т.ч. после перелогина или под другим
+// аккаунтом) узнаёт, по каким уровням сейчас идёт запись/стирание на устройства, и показывает
+// это на карточке вместо числа людей.
+app.MapGet("/api/access-levels/sync-status", (IAccessLevelSyncTracker tracker) =>
+    Results.Ok(tracker.GetActive().Select(s => new
+    {
+        accessLevelId = s.AccessLevelId,
+        stage = s.Stage,
+        done = s.Done,
+        total = s.Total,
+    }))).RequireAuthorization("AccessLevels.View");
+
 app.MapPost("/api/access-levels/{id:guid}/people", async (
     Guid id,
     AssignAccessLevelPeopleRequest request,
@@ -1730,6 +1744,7 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     IDeviceConnectionManager connectionManager,
     IDeviceArpStatusService arpStatusService,
     IDeviceActivityBroadcaster activityBroadcaster,
+    IAccessLevelSyncTracker syncTracker,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
@@ -1766,6 +1781,7 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
     if (toAdd.Count > 0)
     {
         var peopleToSync = toAdd.ToList();
+        syncTracker.Start(id, peopleToSync.Count, "writing");
         _ = Task.Run(async () =>
         {
             using var scope = scopeFactory.CreateScope();
@@ -1783,7 +1799,8 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
                     sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                     backgroundLogger,
                     appLifetime.ApplicationStopping,
-                    levelDeviceIds);
+                    levelDeviceIds,
+                    onPersonDone: done => syncTracker.Report(id, done));
             }
             catch (Exception ex)
             {
@@ -1792,6 +1809,7 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
             }
             finally
             {
+                syncTracker.Finish(id);
                 await NotifyBatchCompleteAsync(sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                     syncId, peopleToSync.Count, peopleToSync.Count, CancellationToken.None);
             }
@@ -1835,6 +1853,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
     Guid id,
     AssignAccessLevelPeopleRequest request,
     AppDbContext dbContext,
+    IAccessLevelSyncTracker syncTracker,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
@@ -1883,6 +1902,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
     var stillHaveLevels = stillAllowed.Select(x => x.EmployeeId).Distinct().ToList();
 
     var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    syncTracker.Start(id, removedIds.Count, "erasing");
     _ = Task.Run(async () =>
     {
         using var scope = scopeFactory.CreateScope();
@@ -1897,6 +1917,8 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
                 appLifetime.ApplicationStopping);
 
             if (stillHaveLevels.Count > 0)
+            {
+                syncTracker.SetStage(id, "writing", stillHaveLevels.Count);
                 await SyncAccessLevelPeopleAsync(
                     syncId,
                     stillHaveLevels,
@@ -1907,7 +1929,9 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
                     broadcaster,
                     backgroundLogger,
                     appLifetime.ApplicationStopping,
-                    levelDeviceIds);
+                    levelDeviceIds,
+                    onPersonDone: done => syncTracker.Report(id, done));
+            }
         }
         catch (Exception ex)
         {
@@ -1916,6 +1940,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
         }
         finally
         {
+            syncTracker.Finish(id);
             await NotifyBatchCompleteAsync(broadcaster, syncId, removedIds.Count, removedIds.Count, CancellationToken.None);
         }
     }, CancellationToken.None);
@@ -1930,6 +1955,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
     Guid id,
     AssignAccessLevelPeopleRequest request,
     AppDbContext dbContext,
+    IAccessLevelSyncTracker syncTracker,
     IServiceScopeFactory scopeFactory,
     IHostApplicationLifetime appLifetime,
     ILogger<Program> logger,
@@ -1946,6 +1972,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
     if (personIds.Count == 0) return Results.BadRequest(new { message = "На уровне нет людей для перезаписи." });
 
     var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    syncTracker.Start(id, personIds.Count, "erasing");
     _ = Task.Run(async () =>
     {
         using var scope = scopeFactory.CreateScope();
@@ -1990,6 +2017,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                 token);
 
             // И записываем заново — с прогрессом, как при обычном назначении.
+            syncTracker.SetStage(id, "writing", personIds.Count);
             await SyncAccessLevelPeopleAsync(
                 syncId,
                 personIds,
@@ -2000,7 +2028,8 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                 sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                 backgroundLogger,
                 token,
-                levelDeviceIds);
+                levelDeviceIds,
+                onPersonDone: done => syncTracker.Report(id, done));
         }
         catch (Exception ex)
         {
@@ -2009,6 +2038,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
         }
         finally
         {
+            syncTracker.Finish(id);
             await NotifyBatchCompleteAsync(sp.GetRequiredService<IDeviceActivityBroadcaster>(),
                 syncId, personIds.Count, personIds.Count, CancellationToken.None);
         }
@@ -6167,11 +6197,82 @@ static async Task<(List<AttendancePeriodRow> rows, string? empName)> BuildAttend
     return (rows, employees.Count == 1 ? singleEmpName : null);
 }
 
+// Письмо в виде «Сетка»: табель-матрица (сотрудники × числа, в ячейке вход-выход) +
+// сводные колонки. Возвращает (<th>…, <tr>…) для шаблона attendance_report.
+static (string Head, string Rows) BuildGridEmailTable(
+    IReadOnlyList<AttendancePeriodRow> rows, DateTime fromUtc, DateTime toUtc, ReportText text)
+{
+    static string Hhmm(DateTime? utc) => utc.HasValue
+        ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm") : "";
+    static string Hm(double hours)
+    {
+        int tm = (int)Math.Round(hours * 60); int h = tm / 60, m = tm % 60;
+        return h == 0 && m == 0 ? "0m" : h == 0 ? $"{m}m" : m == 0 ? $"{h}h" : $"{h}h {m}m";
+    }
+
+    var days = new List<DateOnly>();
+    for (var d = DateOnly.FromDateTime(fromUtc); d <= DateOnly.FromDateTime(toUtc); d = d.AddDays(1)) days.Add(d);
+    var employees = rows.GroupBy(r => r.EmployeeId)
+        .Select(g => new { g.First().EmployeeName, ByDate = g.ToDictionary(x => x.Date), Rows = g.ToList() })
+        .ToList();
+
+    const string thBase = "padding:6px 5px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700;border-bottom:2px solid #e2e8f0;white-space:nowrap";
+    var head = new System.Text.StringBuilder();
+    head.Append($"<th style='{thBase};text-align:left'>{text["employee"]}</th>");
+    foreach (var d in days)
+    {
+        var we = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+        head.Append($"<th style='{thBase};text-align:center{(we ? ";color:#dc2626" : "")}'>{d.Day}</th>");
+    }
+    foreach (var s in new[] { text["gridPresent"], text["gridAbsent"], text["gridActual"], text["gridNorm"], text["gridOt"], text["gridDeficit"], text["gridLate"], text["gridEarly"] })
+        head.Append($"<th style='{thBase};text-align:center'>{s}</th>");
+
+    const string tdBase = "padding:5px 5px;border-bottom:1px solid #e2e8f0;font-size:11px;white-space:nowrap";
+    var body = new System.Text.StringBuilder();
+    foreach (var emp in employees)
+    {
+        body.Append("<tr>");
+        body.Append($"<td style='{tdBase};font-weight:600'>{System.Net.WebUtility.HtmlEncode(emp.EmployeeName)}</td>");
+        foreach (var d in days)
+        {
+            var we = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+            string cell; var extra = "text-align:center";
+            if (!emp.ByDate.TryGetValue(d, out var r)) { cell = ""; if (we) extra += ";background:#f8f8ff"; }
+            else if (r.IsDayOff) { cell = "—"; extra += ";background:#f3f4f6;color:#9ca3af"; }
+            else if (r.OnLeave) { cell = r.LeaveType == "DayOff" ? text["dayOffLeave"] : text["onLeave"]; extra += ";background:#eef2ff;color:#4f46e5"; }
+            else if (r.CheckInUtc.HasValue) { cell = $"{Hhmm(r.CheckInUtc)}-{(r.CheckOutUtc.HasValue ? Hhmm(r.CheckOutUtc) : "…")}"; if ((r.LateMinutes ?? 0) > 0) extra += ";color:#b45309"; }
+            else if (r.IsAbsent) { cell = "✗"; extra += ";background:#fef2f2;color:#dc2626;font-weight:700"; }
+            else { cell = ""; if (we) extra += ";background:#f8f8ff"; }
+            body.Append($"<td style='{tdBase};{extra}'>{cell}</td>");
+        }
+        var workRows = emp.Rows.Where(x => !x.IsDayOff).ToList();
+        int present = workRows.Count(x => x.CheckInUtc.HasValue);
+        int absent = workRows.Count(x => x.IsAbsent);
+        double fact = emp.Rows.Sum(x => x.TotalHours);
+        double norm = workRows.Sum(x => x.NormHours);
+        double ot = emp.Rows.Sum(x => x.OvertimeHours);
+        double lateH = emp.Rows.Sum(x => x.LateMinutes ?? 0) / 60.0;
+        int earlyDays = emp.Rows.Count(x => (x.EarlyLeaveMinutes ?? 0) > 0);
+        double deficit = Math.Max(0, norm - fact - ot);
+        void Cell(string v) => body.Append($"<td style='{tdBase};text-align:center'>{v}</td>");
+        Cell($"{present}/{workRows.Count}");
+        Cell(absent > 0 ? $"{absent}d" : "—");
+        Cell(Hm(fact));
+        Cell(Hm(norm));
+        Cell(ot > 0 ? "+" + Hm(ot) : "—");
+        Cell(deficit > 0.01 ? "-" + Hm(deficit) : "—");
+        Cell(lateH > 0 ? Hm(lateH) : "—");
+        Cell(earlyDays > 0 ? $"{earlyDays}d" : "—");
+        body.Append("</tr>");
+    }
+    return (head.ToString(), body.ToString());
+}
+
 // Даты приходят как календарные дни ("2026-08-02") — биндим DateOnly и НЕ конвертируем
 // через ToUniversalTime(): DateTime с Kind=Unspecified трактовался как локальное время
 // сервера (+4 Баку) и период уезжал на день назад относительно выбранного в UI.
 // lang — язык интерфейса пользователя (en / ru / az): на нём пишутся заголовки и статусы.
-app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, string? view, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -6181,14 +6282,18 @@ app.MapGet("/api/reports/work-hours/excel", async (DateOnly? from, DateOnly? to,
     var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, employeeIds, departmentId, departmentIds, housingBlockIds, kind, dbContext, ct);
+    var text = ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident);
+    // view=grid — табель-матрица (как вид «Сетка» на экране); иначе построчный отчёт.
     // columns — колонки, оставленные в таблице. Пусто или параметра нет — весь набор.
-    var bytes = ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns),
-        ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident));
+    var grid = string.Equals(view, "grid", StringComparison.OrdinalIgnoreCase);
+    var bytes = grid
+        ? ExcelReportBuilder.BuildAttendanceGrid(rows, fromUtc, toUtc, empName, text)
+        : ExcelReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns), text);
     return Results.File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
+        $"work-hours{(grid ? "-grid" : "")}-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.xlsx");
 }).RequireAuthorization("Reports.View");
 
-app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, AppDbContext dbContext, CancellationToken ct) =>
+app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, Guid? employeeId, string? employeeIds, Guid? departmentId, string? departmentIds, string? housingBlockIds, string? kind, string? columns, string? lang, string? view, AppDbContext dbContext, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);
     var fromDay = from ?? today.AddDays(-30);
@@ -6198,9 +6303,12 @@ app.MapGet("/api/reports/work-hours/pdf", async (DateOnly? from, DateOnly? to, G
     var fromUtc = fromDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var toUtc = toDay.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
     var (rows, empName) = await BuildAttendanceRows(fromUtc, toUtc, employeeId, employeeIds, departmentId, departmentIds, housingBlockIds, kind, dbContext, ct);
-    var bytes = PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns),
-        ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident));
-    return Results.File(bytes, "application/pdf", $"work-hours-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
+    var text = ReportText.For(lang, AttendanceKind(kind) == PersonKind.Resident);
+    var grid = string.Equals(view, "grid", StringComparison.OrdinalIgnoreCase);
+    var bytes = grid
+        ? PdfReportBuilder.BuildAttendanceGrid(rows, fromUtc, toUtc, empName, text)
+        : PdfReportBuilder.BuildAttendance(rows, fromUtc, toUtc, empName, AttendanceColumns.Parse(columns), text);
+    return Results.File(bytes, "application/pdf", $"work-hours{(grid ? "-grid" : "")}-{fromUtc:yyyyMMdd}-{toUtc:yyyyMMdd}.pdf");
 }).RequireAuthorization("Reports.View");
 
 // ─── Schedule Planner reports ─────────────────────────────────────────────────
@@ -7712,6 +7820,27 @@ app.MapPost("/api/reports/attendance/send-email", async (
     var visible = AttendanceColumns.Parse(request.Columns);
     // Заголовки — на языке интерфейса отправителя, как в Excel и PDF.
     var text = ReportText.For(request.Lang, reportKind == PersonKind.Resident);
+
+    // Вид «Сетка»: табель-матрица вместо построчного списка. Сводка считается теми же
+    // формулами, что на экране, поэтому берём строки через общий BuildAttendanceRows.
+    if (string.Equals(request.View, "grid", StringComparison.OrdinalIgnoreCase))
+    {
+        var (gridRows, _) = await BuildAttendanceRows(fromUtc, toUtc, null, null, null, null, null, request.Kind, dbContext, cancellationToken);
+        var (gridHead, gridBody) = BuildGridEmailTable(gridRows, fromUtc, toUtc, text);
+        var companyNameGrid = (await dbContext.SystemSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == "CompanyName", cancellationToken))?.Value ?? "ProjectX";
+        var (subjectGrid, bodyGrid) = await tplService.RenderAsync("attendance_report", new()
+        {
+            ["{{companyName}}"] = companyNameGrid,
+            ["{{fromDate}}"] = request.From.ToString("dd.MM.yyyy"),
+            ["{{toDate}}"] = request.To2.ToString("dd.MM.yyyy"),
+            ["{{tableHead}}"] = gridHead,
+            ["{{tableRows}}"] = gridBody,
+            ["{{generatedAt}}"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC"
+        }, cancellationToken);
+        try { await emailService.SendAsync(request.To, subjectGrid, bodyGrid, cancellationToken); }
+        catch (Exception ex) { return Results.BadRequest(new { message = ex.Message }); }
+        return Results.Ok(new { message = $"Report sent to {request.To}." });
+    }
     var emailCols = new (string Key, string Header, bool Center)[]
     {
         (AttendanceColumns.Date, text["date"], false),
@@ -11548,10 +11677,14 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
     CancellationToken cancellationToken,
     // Устройства, которыми ограничиваемся. Назначая уровень, незачем трогать устройства
     // других уровней человека: там его набор дверей не изменился. null — без ограничения.
-    IReadOnlyCollection<Guid>? restrictToDeviceIds = null)
+    IReadOnlyCollection<Guid>? restrictToDeviceIds = null,
+    // Прогресс по людям для серверного реестра (виден всем сессиям): вызывается с числом
+    // обработанных людей после каждого человека.
+    Action<int>? onPersonDone = null)
 {
     var warnings = new List<string>();
     if (personIds.Count == 0) return warnings;
+    var completed = 0;
     var deviceLimit = restrictToDeviceIds is null ? null : restrictToDeviceIds.ToHashSet();
 
     var devices = await dbContext.Devices.AsNoTracking().ToDictionaryAsync(d => d.Id, cancellationToken);
@@ -11621,6 +11754,7 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
             answeringDevices);
 
         warnings.AddRange(personWarnings);
+        onPersonDone?.Invoke(++completed);
     }
 
     return warnings;
@@ -12398,16 +12532,19 @@ internal static class DayPunches
         {
             var t = timeUtc(e);
             var d = direction(e);
+            // Устройство исключено из табеля — его проходы не считаются ни приходом, ни уходом.
+            if (d == AttendanceDirection.None) continue;
             if (d != AttendanceDirection.Out && (first is null || t < first)) first = t;
             if (d != AttendanceDirection.In && (last is null || t > last)) last = t;
         }
         return (first, last);
     }
 
-    /// <summary>Приход/уход плюс число событий за день.</summary>
+    /// <summary>Приход/уход плюс число событий за день. События устройств,
+    /// исключённых из табеля (None), не учитываются и в счётчике.</summary>
     public static DayPunchStat Stat(IEnumerable<PunchEvent> events)
     {
-        var list = events as ICollection<PunchEvent> ?? events.ToList();
+        var list = events.Where(e => e.Direction != AttendanceDirection.None).ToList();
         var (first, last) = Reduce(list, e => e.EventTimeUtc, e => e.Direction);
         return new DayPunchStat(first, last, list.Count);
     }
@@ -12686,7 +12823,7 @@ public sealed record EmailTemplateUpdateRequest(string Subject, string HtmlBody)
 public sealed record EmailTemplatePreviewRequest(string? Subject, string? HtmlBody);
 /// <summary>Columns — колонки, оставленные в таблице; null или пусто — весь набор.</summary>
 // Kind — "employee" (по умолчанию) или "resident" (студенты ADAU).
-public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2, string[]? Columns = null, string? Kind = null, string? Lang = null);
+public sealed record SendAttendanceReportRequest(string To, DateOnly From, DateOnly To2, string[]? Columns = null, string? Kind = null, string? Lang = null, string? View = null);
 public sealed record SendPayrollReportRequest(string To);
 
 public sealed class DeviceStatusBroadcaster(IHubContext<DevicesHub> hub, INotificationService notificationService) : IDeviceStatusBroadcaster

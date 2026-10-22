@@ -2195,7 +2195,8 @@
       "both": "Entry and exit",
       "in": "Entry only",
       "out": "Exit only",
-      "hint": "With «Entry and exit» the day is taken from the first and last event, so a second pass in the morning looks like leaving. Split entry and exit across readers to avoid that."
+      "none": "Exclude from attendance",
+      "hint": "With «Entry and exit» the day is taken from the first and last event, so a second pass in the morning looks like leaving. Split entry and exit across readers to avoid that. «Exclude from attendance» — this device's logs do not affect check-in/out (the access log is kept)."
     }
   },
   "devices": {
@@ -2748,6 +2749,9 @@
     "present": "Present",
     "absentLabel": "Absent",
     "deficit": "Deficit",
+    "viewLabel": "View",
+    "viewDetailed": "Detailed",
+    "viewGrid": "Grid",
     "adminAssignedLeaves": "Admin-assigned leaves",
     "adminAssignedLeavesDesc": "Vacations and days-off assigned by HR. Approved paid leaves count as worked days in payroll.",
     "newLeave": "New leave",
@@ -3208,6 +3212,11 @@
     "thinking": "Thinking…",
     "error": "Something went wrong",
     "clear": "Clear chat",
+    "newChat": "New chat",
+    "lastChat": "Last chat",
+    "history": "Chat history",
+    "historyEmpty": "No saved chats yet",
+    "deleteChat": "Delete chat",
     "intro": "I can search people, configure work schedules and build reports.",
     "example1": "Find employee Anar",
     "example2": "Set 15 min late tolerance for the Office schedule",

@@ -106,6 +106,9 @@ public sealed class ReportText
         ["lateEmail"] = "Late",
         ["dayOff"] = "Day off", ["dayOffLeave"] = "Day off (leave)", ["onLeave"] = "On leave",
         ["absent"] = "Absent", ["present"] = "Present",
+        // Сводные колонки вида «Сетка» (табель-матрица).
+        ["gridPresent"] = "Present", ["gridAbsent"] = "Absent", ["gridActual"] = "Actual", ["gridNorm"] = "Norm",
+        ["gridOt"] = "OT", ["gridDeficit"] = "Deficit", ["gridLate"] = "Late", ["gridEarly"] = "Early",
     };
 
     static readonly Dictionary<string, string> Ru = new()
@@ -122,6 +125,9 @@ public sealed class ReportText
         ["lateEmail"] = "Опоздание",
         ["dayOff"] = "Выходной", ["dayOffLeave"] = "Выходной (отгул)", ["onLeave"] = "В отпуске",
         ["absent"] = "Отсутствует", ["present"] = "Присутствует",
+        // Сводные колонки вида «Сетка» (табель-матрица).
+        ["gridPresent"] = "Присутств.", ["gridAbsent"] = "Отсутств.", ["gridActual"] = "Факт", ["gridNorm"] = "Норма",
+        ["gridOt"] = "Сверх.", ["gridDeficit"] = "Дефицит", ["gridLate"] = "Опозд.", ["gridEarly"] = "Ран.ух.",
     };
 
     static readonly Dictionary<string, string> Az = new()
@@ -138,6 +144,9 @@ public sealed class ReportText
         ["lateEmail"] = "Gecikmə",
         ["dayOff"] = "İstirahət", ["dayOffLeave"] = "İstirahət (icazə)", ["onLeave"] = "Məzuniyyətdə",
         ["absent"] = "Gəlməyib", ["present"] = "İştirak edib",
+        // Сводные колонки вида «Сетка» (табель-матрица).
+        ["gridPresent"] = "İştirak", ["gridAbsent"] = "Qayıb", ["gridActual"] = "Fakt", ["gridNorm"] = "Norma",
+        ["gridOt"] = "Əlavə", ["gridDeficit"] = "Defisit", ["gridLate"] = "Gecik.", ["gridEarly"] = "Erkən",
     };
 }
 
@@ -526,6 +535,167 @@ public static class ExcelReportBuilder
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Вид «Сетка» (табель-матрица): сотрудники в строках, числа периода в колонках,
+    /// в ячейке «вход-выход», затем сводные колонки по сотруднику. Повторяет экранный вид.
+    /// </summary>
+    public static byte[] BuildAttendanceGrid(
+        IReadOnlyList<AttendancePeriodRow> rows,
+        DateTime from, DateTime to, string? employeeFilter, ReportText? text = null)
+    {
+        var t = text ?? ReportText.For(null);
+        const string Brand = "#6e56cf";
+        const string Weekend = "#8e77e8";
+        const string Line = "#e4e1ee";
+
+        static string Hhmm(DateTime? utc) => utc.HasValue
+            ? TimeZoneInfo.ConvertTimeFromUtc(utc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "";
+
+        var fromDate = DateOnly.FromDateTime(from);
+        var toDate = DateOnly.FromDateTime(to);
+        var days = new List<DateOnly>();
+        for (var d = fromDate; d <= toDate; d = d.AddDays(1)) days.Add(d);
+
+        // Группировка по сотруднику; порядок сохраняется (BuildAttendanceRows сортирует по имени).
+        var employees = rows.GroupBy(r => r.EmployeeId)
+            .Select(g => new { g.First().EmployeeName, ByDate = g.ToDictionary(x => x.Date), Rows = g.ToList() })
+            .ToList();
+
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add(t["sheet"]);
+
+        ws.Cell("A1").Value = t["title"];
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 14;
+        ws.Cell("A2").Value = $"{t["period"]}: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+            + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $" · {employeeFilter}");
+
+        var summary = new[] { t["gridPresent"], t["gridAbsent"], t["gridActual"], t["gridNorm"], t["gridOt"], t["gridDeficit"], t["gridLate"], t["gridEarly"] };
+        int headerRow = 4;
+
+        void HeadCell(int col, XLCellValue value, string bg)
+        {
+            var c = ws.Cell(headerRow, col);
+            c.Value = value;
+            c.Style.Fill.BackgroundColor = XLColor.FromHtml(bg);
+            c.Style.Font.FontColor = XLColor.White;
+            c.Style.Font.Bold = true;
+            c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        }
+        HeadCell(1, t["employee"], Brand);
+        ws.Cell(headerRow, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
+        for (int i = 0; i < days.Count; i++)
+            HeadCell(2 + i, days[i].Day, days[i].DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? Weekend : Brand);
+        for (int i = 0; i < summary.Length; i++)
+            HeadCell(2 + days.Count + i, summary[i], Brand);
+
+        int row = headerRow + 1;
+        foreach (var emp in employees)
+        {
+            ws.Cell(row, 1).Value = emp.EmployeeName;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            for (int i = 0; i < days.Count; i++)
+            {
+                var cell = ws.Cell(row, 2 + i);
+                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                var we = days[i].DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                if (!emp.ByDate.TryGetValue(days[i], out var r))
+                {
+                    if (we) cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f8ff");
+                    continue;
+                }
+                if (r.IsDayOff)
+                {
+                    cell.Value = "—";
+                    cell.Style.Font.FontColor = XLColor.FromHtml("#9ca3af");
+                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#f3f4f6");
+                }
+                else if (r.OnLeave)
+                {
+                    cell.Value = r.LeaveType == "DayOff" ? t["dayOffLeave"] : t["onLeave"];
+                    cell.Style.Font.FontColor = XLColor.FromHtml("#4f46e5");
+                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#eef2ff");
+                }
+                else if (r.CheckInUtc.HasValue)
+                {
+                    cell.Value = $"{Hhmm(r.CheckInUtc)}-{(r.CheckOutUtc.HasValue ? Hhmm(r.CheckOutUtc) : "…")}";
+                    if ((r.LateMinutes ?? 0) > 0) cell.Style.Font.FontColor = XLColor.FromHtml("#b45309");
+                }
+                else if (r.IsAbsent)
+                {
+                    cell.Value = "✗";
+                    cell.Style.Font.Bold = true;
+                    cell.Style.Font.FontColor = XLColor.FromHtml("#dc2626");
+                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#fef2f2");
+                }
+                else if (we)
+                {
+                    cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f8ff");
+                }
+            }
+
+            // Сводка по сотруднику — те же формулы, что в экранном виде «Сетка».
+            var workRows = emp.Rows.Where(x => !x.IsDayOff).ToList();
+            int present = workRows.Count(x => x.CheckInUtc.HasValue);
+            int absent = workRows.Count(x => x.IsAbsent);
+            double fact = emp.Rows.Sum(x => x.TotalHours);
+            double norm = workRows.Sum(x => x.NormHours);
+            double ot = emp.Rows.Sum(x => x.OvertimeHours);
+            double late = emp.Rows.Sum(x => x.LateMinutes ?? 0) / 60.0;
+            int earlyDays = emp.Rows.Count(x => (x.EarlyLeaveMinutes ?? 0) > 0);
+            double deficit = Math.Max(0, norm - fact - ot);
+
+            int sc = 2 + days.Count;
+            var vals = new[]
+            {
+                $"{present}/{workRows.Count}",
+                absent > 0 ? $"{absent}d" : "—",
+                Hm(fact),
+                Hm(norm),
+                ot > 0 ? "+" + Hm(ot) : "—",
+                deficit > 0.01 ? "-" + Hm(deficit) : "—",
+                late > 0 ? Hm(late) : "—",
+                earlyDays > 0 ? $"{earlyDays}d" : "—",
+            };
+            for (int i = 0; i < vals.Length; i++)
+            {
+                var cell = ws.Cell(row, sc + i);
+                cell.Value = vals[i];
+                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                if (i == 0) cell.Style.Font.Bold = true;
+            }
+            row++;
+        }
+
+        int nCols = 1 + days.Count + summary.Length;
+        var tableRange = ws.Range(headerRow, 1, Math.Max(row - 1, headerRow), nCols);
+        tableRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.InsideBorderColor = XLColor.FromHtml(Line);
+        tableRange.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+        tableRange.Style.Border.OutsideBorderColor = XLColor.FromHtml(Line);
+
+        ws.Column(1).Width = 24;
+        for (int i = 0; i < days.Count; i++) ws.Column(2 + i).Width = 11;
+        for (int i = 0; i < summary.Length; i++) ws.Column(2 + days.Count + i).Width = 9;
+        ws.SheetView.FreezeColumns(1);
+        ws.SheetView.FreezeRows(headerRow);
+
+        using var ms2 = new MemoryStream();
+        wb.SaveAs(ms2);
+        return ms2.ToArray();
+    }
+
+    // Десятичные часы → "Hh Mm" (как на экране): 9.5 → "9h 30m", 0.5 → "30m".
+    static string Hm(double hours)
+    {
+        int totalMin = (int)Math.Round(hours * 60);
+        int h = totalMin / 60, m = totalMin % 60;
+        if (h == 0 && m == 0) return "0m";
+        if (h == 0) return $"{m}m";
+        if (m == 0) return $"{h}h";
+        return $"{h}h {m}m";
     }
 
     public static byte[] BuildPayroll(
@@ -1167,6 +1337,142 @@ public static class PdfReportBuilder
         using var ms = new MemoryStream();
         doc.GeneratePdf(ms);
         return ms.ToArray();
+    }
+
+    /// <summary>Вид «Сетка» (PDF): табель-матрица — как на экране, A3 альбомная.</summary>
+    public static byte[] BuildAttendanceGrid(
+        IReadOnlyList<AttendancePeriodRow> rows,
+        DateTime from, DateTime to, string? employeeFilter, ReportText? text = null)
+    {
+        var t = text ?? ReportText.For(null);
+        const string Weekend = "#8e77e8";
+
+        static string Hhmm(DateTime? utc) => utc.HasValue
+            ? TimeZoneInfo.ConvertTimeFromUtc(utc.Value, TimeZoneInfo.Local).ToString("HH:mm") : "";
+
+        var fromDate = DateOnly.FromDateTime(from);
+        var toDate = DateOnly.FromDateTime(to);
+        var days = new List<DateOnly>();
+        for (var d = fromDate; d <= toDate; d = d.AddDays(1)) days.Add(d);
+
+        var employees = rows.GroupBy(r => r.EmployeeId)
+            .Select(g => new { g.First().EmployeeName, ByDate = g.ToDictionary(x => x.Date), Rows = g.ToList() })
+            .ToList();
+
+        var summary = new[] { t["gridPresent"], t["gridAbsent"], t["gridActual"], t["gridNorm"], t["gridOt"], t["gridDeficit"], t["gridLate"], t["gridEarly"] };
+
+        var doc = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A3.Landscape());
+                page.Margin(1f, Unit.Centimetre);
+                page.DefaultTextStyle(ts => ts.FontSize(7).FontFamily("Arial"));
+
+                page.Header().Column(col =>
+                {
+                    col.Item().Text(t["title"]).FontSize(14).Bold().FontColor(PrimaryHex);
+                    col.Item().Text($"{t["period"]}: {from:dd.MM.yyyy} – {to:dd.MM.yyyy}"
+                        + (string.IsNullOrWhiteSpace(employeeFilter) ? "" : $" · {employeeFilter}"))
+                        .FontSize(8).FontColor("#555555");
+                    col.Item().PaddingTop(4).LineHorizontal(1).LineColor(PrimaryHex);
+                });
+
+                page.Content().PaddingTop(6).Table(table =>
+                {
+                    table.ColumnsDefinition(c =>
+                    {
+                        c.ConstantColumn(94);                    // Сотрудник
+                        foreach (var _ in days) c.RelativeColumn(1);
+                        foreach (var _ in summary) c.ConstantColumn(32);
+                    });
+
+                    table.Header(h =>
+                    {
+                        h.Cell().Background(PrimaryHex).Padding(2).Text(t["employee"]).FontColor("#ffffff").Bold().FontSize(7);
+                        foreach (var d in days)
+                        {
+                            var we = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                            h.Cell().Background(we ? Weekend : PrimaryHex).Padding(2).AlignCenter()
+                                .Text(d.Day.ToString()).FontColor("#ffffff").Bold().FontSize(6.5f);
+                        }
+                        foreach (var s in summary)
+                            h.Cell().Background(PrimaryHex).Padding(2).AlignCenter().Text(s).FontColor("#ffffff").Bold().FontSize(6f);
+                    });
+
+                    bool alt = false;
+                    foreach (var emp in employees)
+                    {
+                        var rowBg = alt ? "#f8f8ff" : "#ffffff"; alt = !alt;
+                        table.Cell().Background(rowBg).Padding(3).Text(emp.EmployeeName).Bold().FontSize(6.5f);
+                        foreach (var d in days)
+                        {
+                            var we = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                            if (!emp.ByDate.TryGetValue(d, out var r))
+                            {
+                                table.Cell().Background(we ? "#f3f3fb" : rowBg).Padding(2).Text("");
+                                continue;
+                            }
+                            if (r.IsDayOff)
+                                table.Cell().Background("#f3f4f6").Padding(2).AlignCenter().Text("—").FontColor("#9ca3af").FontSize(6.5f);
+                            else if (r.OnLeave)
+                                table.Cell().Background("#eef2ff").Padding(2).AlignCenter()
+                                    .Text(r.LeaveType == "DayOff" ? t["dayOffLeave"] : t["onLeave"]).FontColor("#4f46e5").Bold().FontSize(5.5f);
+                            else if (r.CheckInUtc.HasValue)
+                                table.Cell().Background(we ? "#f8f8ff" : rowBg).Padding(2).AlignCenter()
+                                    .Text($"{Hhmm(r.CheckInUtc)}-{(r.CheckOutUtc.HasValue ? Hhmm(r.CheckOutUtc) : "…")}")
+                                    .FontColor((r.LateMinutes ?? 0) > 0 ? "#b45309" : "#1f2937").FontSize(6f);
+                            else if (r.IsAbsent)
+                                table.Cell().Background("#fef2f2").Padding(2).AlignCenter().Text("✗").FontColor("#dc2626").Bold().FontSize(7f);
+                            else
+                                table.Cell().Background(we ? "#f8f8ff" : rowBg).Padding(2).Text("");
+                        }
+
+                        var workRows = emp.Rows.Where(x => !x.IsDayOff).ToList();
+                        int present = workRows.Count(x => x.CheckInUtc.HasValue);
+                        int absent = workRows.Count(x => x.IsAbsent);
+                        double fact = emp.Rows.Sum(x => x.TotalHours);
+                        double norm = workRows.Sum(x => x.NormHours);
+                        double ot = emp.Rows.Sum(x => x.OvertimeHours);
+                        double lateH = emp.Rows.Sum(x => x.LateMinutes ?? 0) / 60.0;
+                        int earlyDays = emp.Rows.Count(x => (x.EarlyLeaveMinutes ?? 0) > 0);
+                        double deficit = Math.Max(0, norm - fact - ot);
+                        void S(string v) => table.Cell().Background(rowBg).Padding(2).AlignCenter().Text(v).FontSize(6f);
+                        S($"{present}/{workRows.Count}");
+                        S(absent > 0 ? $"{absent}d" : "—");
+                        S(Hm(fact));
+                        S(Hm(norm));
+                        S(ot > 0 ? "+" + Hm(ot) : "—");
+                        S(deficit > 0.01 ? "-" + Hm(deficit) : "—");
+                        S(lateH > 0 ? Hm(lateH) : "—");
+                        S(earlyDays > 0 ? $"{earlyDays}d" : "—");
+                    }
+                });
+
+                page.Footer().AlignRight().Text(x =>
+                {
+                    x.Span(t["page"] + " ").FontSize(7).FontColor("#888888");
+                    x.CurrentPageNumber().FontSize(7);
+                    x.Span(" " + t["of"] + " ").FontSize(7);
+                    x.TotalPages().FontSize(7);
+                });
+            });
+        });
+
+        using var ms = new MemoryStream();
+        doc.GeneratePdf(ms);
+        return ms.ToArray();
+    }
+
+    // Десятичные часы → "Hh Mm" (как на экране).
+    static string Hm(double hours)
+    {
+        int totalMin = (int)Math.Round(hours * 60);
+        int h = totalMin / 60, m = totalMin % 60;
+        if (h == 0 && m == 0) return "0m";
+        if (h == 0) return $"{m}m";
+        if (m == 0) return $"{h}h";
+        return $"{h}h {m}m";
     }
 
     public static byte[] BuildPayroll(

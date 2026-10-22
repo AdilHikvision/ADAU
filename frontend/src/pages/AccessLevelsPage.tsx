@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/signalr'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../auth/AuthContext'
@@ -97,6 +97,11 @@ export function AccessLevelsPage() {
   }, [t])
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([])
   const [error, setError] = useState<string | null>(null)
+  // Серверный статус фоновых записей по уровням: виден всем сессиям (после перелогина/в другом
+  // аккаунте), приходит поллингом — на карточке с активной записью меняем цвет и вместо числа
+  // людей показываем ход записи.
+  const [syncStatus, setSyncStatus] = useState<Record<string, { stage: string; done: number; total: number }>>({})
+  const prevSyncIds = useRef('')
   const [searchQuery, setSearchQuery] = useState('')
   const [tabFilter, setTabFilter] = useState<(typeof ACCESS_TABS)[number]['value']>('access-level')
   const [modalMode, setModalMode] = useState<'create' | 'edit' | 'delete' | 'doors' | null>(null)
@@ -150,6 +155,35 @@ export function AccessLevelsPage() {
       loadDoors()
     }
   }, [token, loadDoors])
+
+  // Опрос статуса фоновых записей на устройства: любая сессия видит, по каким уровням идёт
+  // запись. Когда запись по уровню завершилась — тихо обновляем счётчики людей на карточках.
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const rows = await apiRequest<{ accessLevelId: string; stage: string; done: number; total: number }[]>(
+          '/api/access-levels/sync-status', { token })
+        if (cancelled) return
+        const map: Record<string, { stage: string; done: number; total: number }> = {}
+        for (const r of rows) map[r.accessLevelId] = { stage: r.stage, done: r.done, total: r.total }
+        setSyncStatus(map)
+        const now = Object.keys(map)
+        const prev = prevSyncIds.current ? prevSyncIds.current.split(',') : []
+        const finished = prev.some((id) => !now.includes(id))
+        prevSyncIds.current = now.join(',')
+        if (finished) {
+          apiRequest<AccessLevel[]>('/api/access-levels', { token })
+            .then((l) => { if (!cancelled) setAccessLevels(l) })
+            .catch(() => { /* тихо */ })
+        }
+      } catch { /* статус необязателен */ }
+    }
+    poll()
+    const timer = setInterval(poll, 2500)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [token])
 
   const filteredLevels = useMemo(() => {
     if (!searchQuery.trim()) return accessLevels
@@ -706,10 +740,12 @@ export function AccessLevelsPage() {
                     : t('accessLevels.noResultsFound')}
                 </div>
               ) : (
-                filteredLevels.map((item) => (
+                filteredLevels.map((item) => {
+                  const sync = syncStatus[item.id]
+                  return (
                   <div
                     key={item.id}
-                    className="flex flex-wrap justify-between items-center gap-3 p-4 bg-surface rounded-2xl shadow-md hover:shadow-xl transition-all group border-none"
+                    className={`flex flex-wrap justify-between items-center gap-3 p-4 rounded-2xl shadow-md hover:shadow-xl transition-all group border-none ${sync ? 'bg-primary/5 ring-2 ring-primary/40' : 'bg-surface'}`}
                   >
                     <div className="flex items-center gap-4 min-w-0">
                       <div className="w-12 h-12 flex items-center justify-center bg-primary/10 rounded-2xl text-primary-dark group-hover:bg-primary/20 transition-colors shrink-0">
@@ -722,7 +758,16 @@ export function AccessLevelsPage() {
                         <p className="text-xs font-bold text-text-light mt-1">
                           {t('accessLevels.assignedZonesProtocol', { count: (item.doors ?? []).length })}
                           {' · '}
-                          {t('accessLevelPeople.count', { count: peopleCountOf(item) })}
+                          {sync ? (
+                            <span className="inline-flex items-center gap-1.5 text-primary">
+                              <span className="w-3 h-3 shrink-0 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                              {sync.stage === 'erasing'
+                                ? t('accessLevelPeople.erasingProgress')
+                                : t('accessLevelPeople.addingProgress', { done: sync.done, total: sync.total })}
+                            </span>
+                          ) : (
+                            t('accessLevelPeople.count', { count: peopleCountOf(item) })
+                          )}
                         </p>
                         {/* Свёрнутая операция: ход записи видно прямо на карточке. */}
                         {peopleProgress?.levelId === item.id && (
@@ -750,7 +795,9 @@ export function AccessLevelsPage() {
                       </Button>
                     </div>
                   </div>
-                )))}
+                  )
+                })
+              )}
             </div>
           )}
 

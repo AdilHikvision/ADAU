@@ -460,6 +460,15 @@ function monthRange(yyyymm: string): { from: string; to: string } {
   return { from: localYmd(new Date(y, m - 1, 1)), to: localYmd(new Date(y, m, 0)) }
 }
 
+/** Все календарные даты YYYY-MM-DD от from до to включительно — колонки сетки-табеля. */
+function enumerateDays(from: string, to: string): string[] {
+  const out: string[] = []
+  const d = new Date(from + 'T00:00:00')
+  const end = new Date(to + 'T00:00:00')
+  while (d <= end) { out.push(localYmd(d)); d.setDate(d.getDate() + 1) }
+  return out
+}
+
 /**
  * Маска "HH:MM": при вводе цифр — двоеточие подставляется после первых двух.
  * Лишние символы и более 4 цифр отбрасываются.
@@ -632,6 +641,8 @@ const ATTENDANCE_COLUMNS = [
 ] as const
 type AttendanceColumn = typeof ATTENDANCE_COLUMNS[number]
 const COLUMNS_STORAGE_KEY = 'workHours.visibleColumns'
+// Выбранный вид недельного/месячного отчёта — помнится между сессиями.
+const PERIOD_VIEW_STORAGE_KEY = 'workHours.periodView'
 
 /** Пусто, битое значение или ни одного известного ключа — показываем всё. */
 function loadVisibleColumns(): Set<AttendanceColumn> {
@@ -681,6 +692,14 @@ export function WorkHoursTrackingPage() {
     const p = new URLSearchParams(window.location.search).get('sub')
     return p === 'all' || p === 'present' || p === 'absent' || p === 'late' || p === 'early' || p === 'overtime' || p === 'permission' ? p : 'all'
   })
+  // Недельный/месячный отчёт: «Подробно» — карточки по сотрудникам с разбивкой по дням,
+  // «Сетка» — табель-матрица (сотрудники слева, числа сверху, вход-выход в ячейке).
+  const [periodView, setPeriodView] = useState<'detailed' | 'grid'>(() => {
+    try { return localStorage.getItem(PERIOD_VIEW_STORAGE_KEY) === 'grid' ? 'grid' : 'detailed' } catch { return 'detailed' }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(PERIOD_VIEW_STORAGE_KEY, periodView) } catch { /* приватный режим */ }
+  }, [periodView])
 
   // Сотрудники или студенты. Студенты есть только в модуле ADAU — в остальных
   // модулях переключателя нет и отчёт всегда по сотрудникам.
@@ -868,7 +887,9 @@ export function WorkHoursTrackingPage() {
       else if (tab === 'monthly') { const r = monthRange(monthlyAnchor); from = r.from; to = r.to }
       await apiRequest('/api/reports/attendance/send-email', {
         method: 'POST', token,
-        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to, columns: ATTENDANCE_COLUMNS.filter(showCol), kind, lang: i18n.language }),
+        body: JSON.stringify({ to: emailReportTo.trim(), from, to2: to, columns: ATTENDANCE_COLUMNS.filter(showCol), kind, lang: i18n.language,
+          // Недельный/месячный в режиме «Сетка» уходят письмом табель-матрицей.
+          view: tab !== 'daily' && periodView === 'grid' ? 'grid' : undefined }),
       })
       alert(t('workHours.reportSentTo', { email: emailReportTo.trim() }))
       setEmailReportModal(false)
@@ -1628,6 +1649,23 @@ useEffect(() => {
               </div>
             )}
 
+            {/* Смена вида: «Подробно» ↔ «Сетка» — только для недельного и месячного отчётов. */}
+            {(tab === 'weekly' || tab === 'monthly') && (
+              <div className="space-y-1">
+                <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.viewLabel')}</label>
+                <div className="inline-flex rounded-xl bg-background-light p-0.5">
+                  <button type="button" onClick={() => setPeriodView('detailed')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${periodView === 'detailed' ? 'bg-surface text-primary shadow-sm' : 'text-text-muted hover:text-text-dark'}`}>
+                    <span className="material-symbols-outlined text-base" aria-hidden="true">view_list</span>{t('workHours.viewDetailed')}
+                  </button>
+                  <button type="button" onClick={() => setPeriodView('grid')}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${periodView === 'grid' ? 'bg-surface text-primary shadow-sm' : 'text-text-muted hover:text-text-dark'}`}>
+                    <span className="material-symbols-outlined text-base" aria-hidden="true">calendar_view_month</span>{t('workHours.viewGrid')}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {tab === 'monthlyHours' && (
               <div className="space-y-1">
                 <label className="block text-[10px] font-black text-text-light uppercase tracking-widest">{t('workHours.month')}</label>
@@ -1715,6 +1753,8 @@ useEffect(() => {
                     params.set('to', range.to)
                     params.set('columns', columnsParam)
                     params.set('lang', i18n.language)
+                    // Недельный/месячный в режиме «Сетка» выгружаются табель-матрицей.
+                    if (tab !== 'daily' && periodView === 'grid') params.set('view', 'grid')
                     downloadReport(`/api/reports/work-hours/excel?${params}`, 'excel')
                   }}
                 >
@@ -1736,6 +1776,7 @@ useEffect(() => {
                     params.set('to', range.to)
                     params.set('columns', columnsParam)
                     params.set('lang', i18n.language)
+                    if (tab !== 'daily' && periodView === 'grid') params.set('view', 'grid')
                     downloadReport(`/api/reports/work-hours/pdf?${params}`, 'pdf')
                   }}
                 >
@@ -2026,6 +2067,103 @@ useEffect(() => {
                     <span className="material-symbols-outlined text-4xl">check_circle</span>
                     <p className="text-sm">{t('workHours.noEmployeesMatchFilter')}</p>
                   </div>
+                ) : periodView === 'grid' ? (
+                  (() => {
+                    // Сетка-табель: строки — сотрудники, колонки — числа периода,
+                    // в ячейке «вход-выход», затем сводные колонки по сотруднику.
+                    const days = enumerateDays(range.from, range.to)
+                    return (
+                      <div className="bg-surface rounded-2xl shadow-sm overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="text-[9px] font-black text-text-light uppercase tracking-wider border-b border-border bg-background-light">
+                              <th className="sticky left-0 z-10 bg-background-light px-3 py-2 text-left min-w-[180px]">{t('workHours.employee')}</th>
+                              {days.map((ymd) => {
+                                const dd = new Date(ymd + 'T00:00:00')
+                                const we = dd.getDay() === 0 || dd.getDay() === 6
+                                return (
+                                  <th key={ymd} className={`px-1 py-2 text-center min-w-[74px] ${we ? 'text-error-text' : ''}`}>
+                                    <div className="text-xs">{dd.getDate()}</div>
+                                    <div className="text-[8px] opacity-70">{dd.toLocaleDateString(i18n.language, { weekday: 'short' })}</div>
+                                  </th>
+                                )
+                              })}
+                              <th className="px-2 py-2 text-center border-l border-border">{t('workHours.present')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.absentLabel')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.actual')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.norm')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.ot')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.deficit')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.late')}</th>
+                              <th className="px-2 py-2 text-center">{t('workHours.early')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedEmps.rows.map((emp) => {
+                              // r.date приходит как ISO-таймстамп ("YYYY-MM-DDT00:00:00Z"),
+                              // а колонки сетки — календарные даты "YYYY-MM-DD": берём первые 10 символов.
+                              const byDate = new Map(emp.rows.map((r) => [r.date.slice(0, 10), r]))
+                              const workRows = emp.rows.filter(r => !r.isDayOff)
+                              const present = workRows.filter(r => r.checkInUtc).length
+                              const absent = workRows.filter(r => r.isAbsent).length
+                              const totalActual = emp.rows.reduce((s, r) => s + r.totalHours, 0)
+                              const totalNorm = workRows.reduce((s, r) => s + r.normHours, 0)
+                              const totalOT = emp.rows.reduce((s, r) => s + r.overtimeHours, 0)
+                              const totalLate = emp.rows.reduce((s, r) => s + (r.lateMinutes ?? 0), 0)
+                              const totalEarlyDays = emp.rows.filter(r => (r.earlyLeaveMinutes ?? 0) > 0).length
+                              const deficit = Math.max(0, totalNorm - totalActual - totalOT)
+                              return (
+                                <tr key={emp.name} className="border-b border-border last:border-none hover:bg-slate-50">
+                                  <td className="sticky left-0 z-10 bg-surface px-3 py-2 font-bold text-text-dark whitespace-nowrap">{emp.name}</td>
+                                  {days.map((ymd) => {
+                                    const r = byDate.get(ymd)
+                                    const dd = new Date(ymd + 'T00:00:00')
+                                    const we = dd.getDay() === 0 || dd.getDay() === 6
+                                    let cls = 'px-1 py-1.5 text-center font-mono whitespace-nowrap text-[11px]'
+                                    let content: ReactNode = <span className="text-text-light">—</span>
+                                    let title: string | undefined
+                                    if (!r) {
+                                      if (we) cls += ' bg-slate-50'
+                                    } else if (r.isDayOff) {
+                                      cls += ' bg-slate-50'; content = <span className="text-slate-400">—</span>; title = t('workHours.dayOff')
+                                    } else if (r.onLeave) {
+                                      cls += ' bg-indigo-50'; title = r.leaveType ?? undefined
+                                      content = <span className="text-indigo-600 font-bold">{t(r.leaveType === 'DayOff' ? 'workHours.onDayOff' : 'workHours.onLeave')}</span>
+                                    } else if (r.checkInUtc) {
+                                      const inT = formatTimeOnly(r.checkInUtc)
+                                      const outT = r.checkOutUtc ? formatTimeOnly(r.checkOutUtc) : '…'
+                                      const late = (r.lateMinutes ?? 0) > 0
+                                      const early = (r.earlyLeaveMinutes ?? 0) > 0
+                                      content = (
+                                        <span>
+                                          <span className={late ? 'text-amber-700' : 'text-green-700'}>{inT}</span>
+                                          <span className="text-text-light">-</span>
+                                          <span className={early ? 'text-orange-600' : 'text-blue-700'}>{outT}</span>
+                                        </span>
+                                      )
+                                    } else if (r.isAbsent) {
+                                      cls += ' bg-red-50'; content = <span className="text-error-text font-bold">✗</span>; title = t('workHours.absent')
+                                    } else if (we) {
+                                      cls += ' bg-slate-50'
+                                    }
+                                    return <td key={ymd} className={cls} title={title}>{content}</td>
+                                  })}
+                                  <td className="px-2 py-1.5 text-center font-bold text-text-dark border-l border-border">{present}/{workRows.length}</td>
+                                  <td className="px-2 py-1.5 text-center">{absent > 0 ? <span className="text-error-text font-bold">{absent}d</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-2 py-1.5 text-center font-mono text-text-dark">{formatHM(totalActual)}</td>
+                                  <td className="px-2 py-1.5 text-center font-mono text-text-light">{formatHM(totalNorm)}</td>
+                                  <td className="px-2 py-1.5 text-center">{totalOT > 0 ? <span className="text-purple-700 font-bold">+{formatHM(totalOT)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-2 py-1.5 text-center">{deficit > 0.05 ? <span className="text-red-600 font-bold">-{formatHM(deficit)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-2 py-1.5 text-center">{totalLate > 0 ? <span className="text-amber-700 font-bold">{formatMinutesHM(totalLate)}</span> : <span className="text-text-light">—</span>}</td>
+                                  <td className="px-2 py-1.5 text-center">{totalEarlyDays > 0 ? <span className="text-orange-600 font-bold">{totalEarlyDays}d</span> : <span className="text-text-light">—</span>}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })()
                 ) : (
                   pagedEmps.rows.map((emp) => {
                     const workRows = emp.rows.filter(r => !r.isDayOff)

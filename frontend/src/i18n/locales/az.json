@@ -2195,7 +2195,8 @@
       "both": "Giriş və çıxış",
       "in": "Yalnız giriş",
       "out": "Yalnız çıxış",
-      "hint": "«Giriş və çıxış» seçildikdə gün ilk və son hadisə üzrə hesablanır, ona görə səhər ikinci keçid çıxış kimi görünür. Bunun qarşısını almaq üçün girişi və çıxışı ayrı oxuyuculara bölün."
+      "none": "Tabeldə nəzərə alınmasın",
+      "hint": "«Giriş və çıxış» seçildikdə gün ilk və son hadisə üzrə hesablanır, ona görə səhər ikinci keçid çıxış kimi görünür. Bunun qarşısını almaq üçün girişi və çıxışı ayrı oxuyuculara bölün. «Tabeldə nəzərə alınmasın» — bu cihazın logları giriş/çıxışa təsir etmir (keçid jurnalı qalır)."
     }
   },
   "devices": {
@@ -2744,6 +2745,9 @@
     "present": "Mövcud",
     "absentLabel": "Yoxdur",
     "deficit": "Defisit",
+    "viewLabel": "Görünüş",
+    "viewDetailed": "Ətraflı",
+    "viewGrid": "Cədvəl",
     "adminAssignedLeaves": "Administrator tərəfindən təyin edilmiş məzuniyyətlər",
     "adminAssignedLeavesDesc": "HR tərəfindən təyin edilmiş məzuniyyət və istirahət günləri. Təsdiqlənmiş ödənişli məzuniyyətlər maaşda işlənmiş günlər kimi sayılır.",
     "newLeave": "Yeni məzuniyyət",
@@ -3200,6 +3204,11 @@
     "thinking": "Düşünürəm…",
     "error": "Xəta baş verdi",
     "clear": "Söhbəti təmizlə",
+    "newChat": "Yeni söhbət",
+    "lastChat": "Son söhbət",
+    "history": "Söhbət tarixçəsi",
+    "historyEmpty": "Hələ saxlanılmış söhbət yoxdur",
+    "deleteChat": "Söhbəti sil",
     "intro": "İnsanları axtara, iş qrafiklərini tənzimləyə və hesabatlar hazırlaya bilərəm.",
     "example1": "Anar adlı əməkdaşı tap",
     "example2": "Ofis qrafiki üçün 15 dəqiqə gecikmə toleransı qoy",

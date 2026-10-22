@@ -52,18 +52,20 @@ const ParkingHistoryPage = lazy(() => named(import('./pages/parking'), 'ParkingH
 const ParkingPosPage = lazy(() => named(import('./pages/parking'), 'ParkingPosPage'))
 
 // Dashboard route: Parking modulunda AktivParking "Ana Səhifə"-sini göstərir
-// (adı "Dashboard" qalır); Workforce-da "Dashboard" əsas səhifə (AnaHomePage)
-// məzmununu göstərir; digər modullarda normal ProjectX dashboard.
+// (adı "Dashboard" qalır); Workforce və Housing (ADAU) modullarında əsas səhifə
+// "Aktiv Şirkət" dashboard-udur (AnaHomePage); digər modullarda normal dashboard.
 function DashboardRoute() {
   const { activeModule } = useModule()
-  return activeModule === 'parking' ? <ApHomePage /> : activeModule === 'workforce' ? <AnaHomePage /> : <DashboardPage />
+  return activeModule === 'parking' ? <ApHomePage />
+    : activeModule === 'workforce' || activeModule === 'housing' ? <AnaHomePage />
+    : <DashboardPage />
 }
 
-// /dashboard route: Workforce modulunda əsas səhifə məzmununu (AnaHomePage) göstərir,
-// adı "Dashboard" qalır; parking/gym üçün toxunulmadan DashboardPage qalır.
+// /dashboard route: Workforce və Housing (ADAU) modullarında "Aktiv Şirkət" dashboard-u
+// (AnaHomePage) göstərilir; qalan modullar üçün DashboardPage toxunulmadan qalır.
 function DashboardMain() {
   const { activeModule } = useModule()
-  return activeModule === 'workforce' ? <AnaHomePage /> : <DashboardPage />
+  return activeModule === 'workforce' || activeModule === 'housing' ? <AnaHomePage /> : <DashboardPage />
 }
 
 function App() {

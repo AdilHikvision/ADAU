@@ -449,13 +449,14 @@ public sealed class AssistantToolbox(AppDbContext db, IReadOnlySet<string> permi
             }, ["employee_id"]),
 
         MakeTool("attendance_report",
-            "Attendance summary for a date range: per employee — days present, total hours, late arrivals. Optional filters by department name or employee search query.",
+            "Attendance report for a date range (max 92 days), same numbers as the Work Hours page. Per employee: days present, absent, on leave, total and overtime hours, late arrivals with total late minutes, early leaves. When the filters match 5 employees or fewer, also returns a per-day breakdown (status, shift start, check-in, check-out, late minutes) — use it to list individual late arrivals. schedule = null means the employee has no work schedule, so lateness cannot be calculated.",
             new Dictionary<string, object>
             {
                 ["from_date"] = new { type = "string", description = "yyyy-MM-dd inclusive" },
                 ["to_date"] = new { type = "string", description = "yyyy-MM-dd inclusive" },
                 ["department"] = new { type = "string", description = "Department name filter (contains match)" },
-                ["employee_query"] = new { type = "string", description = "Employee name filter (contains match)" },
+                ["employee_id"] = new { type = "string", description = "Employee GUID from search_people (preferred for one person)" },
+                ["employee_query"] = new { type = "string", description = "Employee name or employee number filter (contains match)" },
             }, ["from_date", "to_date"]),
 
         MakeTool("list_devices",
@@ -811,67 +812,168 @@ public sealed class AssistantToolbox(AppDbContext db, IReadOnlySet<string> permi
 
         var department = Str(input, "department")?.Trim();
         var employeeQuery = Str(input, "employee_query")?.Trim();
+        var hasEmployeeId = Guid.TryParse(Str(input, "employee_id"), out var employeeId);
+        var personFilter = hasEmployeeId || !string.IsNullOrEmpty(employeeQuery);
 
-        // Локальные сутки → UTC-границы.
-        var fromUtc = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
-        var toUtc = to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        // Те же источники и та же сетка дней, что у /api/attendance/period (страница Work Hours):
+        // проходы из device_auth_logs, сутки по UTC, расчёт дня — AttendanceDayCalculator.
+        var fromUtc = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var toUtc = to.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
 
-        var recordsQuery = db.AttendanceRecords.AsNoTracking()
-            .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < toUtc);
+        var employeesQuery = db.Employees.AsNoTracking()
+            .Include(e => e.Department)
+            .Include(e => e.WorkSchedule).ThenInclude(ws => ws!.Shifts)
+            .Include(e => e.DayPatterns.Where(dp => dp.Date >= from && dp.Date <= to)).ThenInclude(dp => dp.WorkSchedule).ThenInclude(ws => ws!.Shifts)
+            .Where(e => e.Kind == PersonKind.Employee);
 
-        if (!string.IsNullOrEmpty(department))
-            recordsQuery = recordsQuery.Where(r =>
-                r.Employee.Department != null &&
-                EF.Functions.ILike(r.Employee.Department.Name, $"%{department}%"));
+        // Без фильтра по человеку — как в Work Hours: только активные с графиком. Если спросили
+        // про конкретного сотрудника, отдаём его в любом случае: модель увидит schedule = null
+        // и объяснит, почему опоздания не считаются, вместо «нет данных».
+        if (!personFilter)
+            employeesQuery = employeesQuery.Where(e =>
+                e.IsActive && (e.WorkScheduleId != null || e.DayPatterns.Any(dp => dp.WorkScheduleId != null)));
+
+        if (hasEmployeeId)
+            employeesQuery = employeesQuery.Where(e => e.Id == employeeId);
 
         if (!string.IsNullOrEmpty(employeeQuery))
-            recordsQuery = recordsQuery.Where(r =>
-                EF.Functions.ILike(r.Employee.FirstName + " " + r.Employee.LastName, $"%{employeeQuery}%"));
+        {
+            var pattern = $"%{employeeQuery}%";
+            employeesQuery = employeesQuery.Where(e =>
+                EF.Functions.ILike(e.FirstName + " " + e.LastName, pattern) ||
+                EF.Functions.ILike(e.LastName + " " + e.FirstName, pattern) ||
+                (e.EmployeeNo != null && EF.Functions.ILike(e.EmployeeNo, pattern)));
+        }
 
-        var records = await recordsQuery
-            .Select(r => new
-            {
-                r.EmployeeId,
-                Name = r.Employee.FirstName + " " + r.Employee.LastName,
-                Department = r.Employee.Department != null ? r.Employee.Department.Name : null,
-                r.EventTimeUtc,
-                r.EventType,
-                ShiftStart = r.Employee.WorkSchedule != null ? r.Employee.WorkSchedule.ShiftStart : null,
-                Tolerance = r.Employee.WorkSchedule != null ? r.Employee.WorkSchedule.LateToleranceMinutes : 0,
-            })
+        if (!string.IsNullOrEmpty(department))
+            employeesQuery = employeesQuery.Where(e =>
+                e.Department != null && EF.Functions.ILike(e.Department.Name, $"%{department}%"));
+
+        var employees = await employeesQuery
+            .OrderBy(e => e.LastName).ThenBy(e => e.FirstName)
             .ToListAsync(ct);
 
-        var report = records
-            .GroupBy(r => new { r.EmployeeId, r.Name, r.Department })
-            .Select(g =>
+        if (employees.Count == 0)
+            return (JsonSerializer.Serialize(new
             {
-                var days = g.GroupBy(r => DateOnly.FromDateTime(r.EventTimeUtc.ToLocalTime()))
-                    .Select(day =>
-                    {
-                        var firstIn = day.Where(r => r.EventType == AttendanceEventType.In)
-                            .Select(r => (DateTime?)r.EventTimeUtc.ToLocalTime()).Min();
-                        var lastOut = day.Where(r => r.EventType == AttendanceEventType.Out)
-                            .Select(r => (DateTime?)r.EventTimeUtc.ToLocalTime()).Max();
-                        double hours = firstIn is not null && lastOut is not null && lastOut > firstIn
-                            ? Math.Round((lastOut.Value - firstIn.Value).TotalHours, 2)
-                            : 0;
-                        var shiftStart = day.First().ShiftStart;
-                        var tolerance = day.First().Tolerance;
-                        var late = firstIn is not null && shiftStart is not null &&
-                                   firstIn.Value.TimeOfDay > shiftStart.Value + TimeSpan.FromMinutes(tolerance);
-                        return new { hours, late, present = firstIn is not null || lastOut is not null };
-                    })
-                    .ToList();
+                From = from.ToString("yyyy-MM-dd"),
+                To = to.ToString("yyyy-MM-dd"),
+                EmployeesInReport = 0,
+                Message = "no employee matched the filters; check the name with search_people",
+            }, JsonOpts), null, false);
 
-                return new
-                {
-                    g.Key.Name,
-                    g.Key.Department,
-                    DaysPresent = days.Count(d => d.present),
-                    TotalHours = Math.Round(days.Sum(d => d.hours), 1),
-                    LateArrivals = days.Count(d => d.late),
-                };
-            })
+        // +1 день логов: check-out ночной смены последнего дня попадает на следующие сутки.
+        var rangeEndExclusive = toUtc.AddDays(2);
+        var logs = await db.DeviceAuthLogs.AsNoTracking()
+            .Where(r => r.EventTimeUtc >= fromUtc && r.EventTimeUtc < rangeEndExclusive)
+            .Select(r => new PunchEvent(r.EmployeeNoString, r.EventTimeUtc,
+                r.Device != null ? r.Device.AttendanceDirection : AttendanceDirection.Both))
+            .ToListAsync(ct);
+        var byEmpNoDay = logs
+            .GroupBy(r => (Emp: r.EmployeeNoString.Trim().ToLowerInvariant(), Day: r.EventTimeUtc.Date))
+            .ToDictionary(g => g.Key, g => DayPunches.Stat(g));
+
+        var empIds = employees.Select(e => e.Id).ToList();
+
+        var corrByEmpDate = (await db.AttendanceCorrections.AsNoTracking()
+                .Where(c => c.DateUtc >= fromUtc && c.DateUtc <= toUtc && empIds.Contains(c.EmployeeId))
+                .ToListAsync(ct))
+            .ToDictionary(c => (c.EmployeeId, c.DateUtc));
+
+        var leavesByEmp = (await db.EmployeeLeaves.AsNoTracking()
+                .Where(l => l.Status == LeaveStatus.Approved
+                         && l.StartDate <= to && l.EndDate >= from
+                         && empIds.Contains(l.EmployeeId))
+                .ToListAsync(ct))
+            .GroupBy(l => l.EmployeeId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var permByEmpDate = (await db.AttendancePermissions.AsNoTracking()
+                .Where(p => p.Date >= from && p.Date <= to && empIds.Contains(p.EmployeeId))
+                .ToListAsync(ct))
+            .ToDictionary(p => (p.EmployeeId, p.Date));
+
+        static string? LocalHhmm(DateTime? utc) => utc.HasValue
+            ? TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc.Value, DateTimeKind.Utc), TimeZoneInfo.Local).ToString("HH:mm")
+            : null;
+
+        // Будущие дни ещё не наступили — без этого они попали бы в «отсутствия».
+        var lastDayUtc = toUtc < DateTime.UtcNow.Date ? toUtc : DateTime.UtcNow.Date;
+        var detailed = employees.Count <= 5;
+
+        var report = employees.Select(e =>
+        {
+            var empKeyLower = (e.EmployeeNo ?? "").Trim().ToLowerInvariant();
+            var patternsByDate = e.DayPatterns.ToDictionary(dp => dp.Date);
+            leavesByEmp.TryGetValue(e.Id, out var empLeaves);
+
+            var days = new List<object>();
+            int present = 0, absent = 0, onLeave = 0, lateCount = 0, lateMinutes = 0, earlyCount = 0;
+            double totalHours = 0, overtimeHours = 0;
+
+            for (var day = fromUtc; day <= lastDayUtc; day = day.AddDays(1))
+            {
+                var dayKey = DateOnly.FromDateTime(day);
+                patternsByDate.TryGetValue(dayKey, out var dayPattern);
+
+                DateTime? rawFirst = null, rawLast = null;
+                if (byEmpNoDay.TryGetValue((empKeyLower, day), out var stat)) { rawFirst = stat.First; rawLast = stat.Last; }
+                corrByEmpDate.TryGetValue((e.Id, day), out var corr);
+                var leave = empLeaves?.FirstOrDefault(l => l.StartDate <= dayKey && l.EndDate >= dayKey);
+
+                var d = AttendanceDayCalculator.Compute(e.WorkSchedule, dayPattern, rawFirst, rawLast, corr, leave,
+                    byEmpNoDay.TryGetValue((empKeyLower, day.AddDays(1)), out var nextStat) ? nextStat.First : null);
+
+                // Разрешение: при ShowInReport часы отлучки вычитаются из общего времени.
+                var hours = d.TotalHours;
+                if (permByEmpDate.TryGetValue((e.Id, dayKey), out var perm) && perm.ShowInReport && hours > 0)
+                    hours = Math.Round(Math.Max(0, hours - Math.Max(0, (perm.ToTime - perm.FromTime).TotalHours)), 2);
+
+                var late = d.LateMinutes ?? 0;
+                // Без отметки ухода «ранний уход» считать не от чего.
+                var early = d.CheckOutUtc.HasValue ? d.EarlyLeaveMinutes ?? 0 : 0;
+
+                if (d.CheckInUtc.HasValue) present++;
+                if (d.IsAbsent) absent++;
+                if (d.OnLeave) onLeave++;
+                if (late > 0) { lateCount++; lateMinutes += late; }
+                if (early > 0) earlyCount++;
+                totalHours += hours;
+                overtimeHours += d.OvertimeHours;
+
+                // Пустые дни (выходной без проходов, день вне графика) в разбивку не идут.
+                if (detailed && (d.CheckInUtc.HasValue || d.IsAbsent || d.OnLeave))
+                    days.Add(new
+                    {
+                        Date = dayKey.ToString("yyyy-MM-dd"),
+                        Status = d.OnLeave ? "on_leave" : d.IsAbsent ? "absent" : d.IsDayOff ? "worked_on_day_off" : "present",
+                        ShiftStart = d.ShiftStart?.ToString(@"hh\:mm"),
+                        CheckIn = LocalHhmm(d.CheckInUtc),
+                        CheckOut = LocalHhmm(d.CheckOutUtc),
+                        Hours = hours,
+                        LateMinutes = late,
+                        EarlyLeaveMinutes = early,
+                        d.Corrected,
+                    });
+            }
+
+            return new
+            {
+                Name = (e.FirstName + " " + e.LastName).Trim(),
+                e.EmployeeNo,
+                Department = e.Department?.Name,
+                Schedule = e.WorkSchedule?.Name,
+                DaysPresent = present,
+                DaysAbsent = absent,
+                DaysOnLeave = onLeave,
+                TotalHours = Math.Round(totalHours, 1),
+                OvertimeHours = Math.Round(overtimeHours, 1),
+                LateArrivals = lateCount,
+                LateMinutesTotal = lateMinutes,
+                EarlyLeaves = earlyCount,
+                Days = detailed ? days : null,
+            };
+        })
             .OrderByDescending(x => x.TotalHours)
             .Take(100)
             .ToList();

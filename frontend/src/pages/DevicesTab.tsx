@@ -71,8 +71,8 @@ interface DeviceFormData {
   deviceType: number
   username: string
   password: string
-  /** Что проход означает для табеля. Both — прежнее поведение: первый проход за день приход, последний уход. */
-  attendanceDirection: 'Both' | 'In' | 'Out'
+  /** Что проход означает для табеля. Both — прежнее поведение: первый проход за день приход, последний уход. None — не учитывать в табеле. */
+  attendanceDirection: 'Both' | 'In' | 'Out' | 'None'
   /** Только для ANPR-камеры: '' — определять по открытой сессии, иначе Entry/Exit. */
   parkingDirection: '' | 'Entry' | 'Exit'
   parkingZoneId: string
@@ -444,7 +444,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
       deviceType: deviceTypeStringToNumber(device.deviceType),
       username: device.username ?? 'admin',
       password: '',
-      attendanceDirection: (device.attendanceDirection === 'In' || device.attendanceDirection === 'Out') ? device.attendanceDirection : 'Both',
+      attendanceDirection: (device.attendanceDirection === 'In' || device.attendanceDirection === 'Out' || device.attendanceDirection === 'None') ? device.attendanceDirection : 'Both',
       parkingDirection: (device.parkingDirection === 'Entry' || device.parkingDirection === 'Exit') ? device.parkingDirection : '',
       parkingZoneId: device.parkingZoneId ?? '',
       barrierOutput: device.barrierOutput ? String(device.barrierOutput) : '',
@@ -917,6 +917,7 @@ export const DevicesTab = forwardRef((_props, ref) => {
                 <option value="Both">{t('devicesTab.attendanceDirection.both')}</option>
                 <option value="In">{t('devicesTab.attendanceDirection.in')}</option>
                 <option value="Out">{t('devicesTab.attendanceDirection.out')}</option>
+                <option value="None">{t('devicesTab.attendanceDirection.none')}</option>
               </select>
               <p className="mt-1 text-[10px] text-text-light">{t('devicesTab.attendanceDirection.hint')}</p>
             </div>
