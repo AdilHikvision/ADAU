@@ -166,7 +166,7 @@ public sealed class DevicePersonSyncService(
         return await DeletePersonFromDeviceAsync(GymCustomerEmployeeNo(customer), deviceId, cancellationToken);
     }
 
-    public async Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true)
     {
         var card = await dbContext.Cards
             .Include(c => c.Employee)
@@ -186,13 +186,16 @@ public sealed class DevicePersonSyncService(
                 ? TruncateEmployeeNo(GetEmployeeNo(card.Employee))
                 : GetEmployeeNo(card.Visitor!);
 
-        var syncPerson = card.GymCustomerId != null
-            ? await SyncGymCustomerAsync(card.GymCustomerId.Value, deviceId, cancellationToken)
-            : card.Employee != null
-                ? await SyncEmployeeAsync(card.EmployeeId!.Value, deviceId, cancellationToken)
-                : await SyncVisitorAsync(card.VisitorId!.Value, deviceId, cancellationToken);
-        if (!syncPerson.Success)
-            return syncPerson;
+        if (ensurePerson)
+        {
+            var syncPerson = card.GymCustomerId != null
+                ? await SyncGymCustomerAsync(card.GymCustomerId.Value, deviceId, cancellationToken)
+                : card.Employee != null
+                    ? await SyncEmployeeAsync(card.EmployeeId!.Value, deviceId, cancellationToken)
+                    : await SyncVisitorAsync(card.VisitorId!.Value, deviceId, cancellationToken);
+            if (!syncPerson.Success)
+                return syncPerson;
+        }
 
         // ISAPI: в CardInfo обязателен узел cardType (см. capabilities: normalCard, patrolCard, qrCode …).
         var body = JsonSerializer.Serialize(new
@@ -253,7 +256,7 @@ public sealed class DevicePersonSyncService(
         || error.Contains("checkEmployeeNo", StringComparison.OrdinalIgnoreCase)
         || error.Contains("checkUser", StringComparison.OrdinalIgnoreCase);
 
-    public async Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true)
     {
         var face = await dbContext.Faces
             .Include(f => f.Employee)
@@ -279,13 +282,16 @@ public sealed class DevicePersonSyncService(
                 ? TruncateEmployeeNo(GetEmployeeNo(face.Employee))
                 : GetEmployeeNo(face.Visitor!);
 
-        var syncPerson = face.GymCustomerId != null
-            ? await SyncGymCustomerAsync(face.GymCustomerId.Value, deviceId, cancellationToken)
-            : face.Employee != null
-                ? await SyncEmployeeAsync(face.EmployeeId!.Value, deviceId, cancellationToken)
-                : await SyncVisitorAsync(face.VisitorId!.Value, deviceId, cancellationToken);
-        if (!syncPerson.Success)
-            return syncPerson;
+        if (ensurePerson)
+        {
+            var syncPerson = face.GymCustomerId != null
+                ? await SyncGymCustomerAsync(face.GymCustomerId.Value, deviceId, cancellationToken)
+                : face.Employee != null
+                    ? await SyncEmployeeAsync(face.EmployeeId!.Value, deviceId, cancellationToken)
+                    : await SyncVisitorAsync(face.VisitorId!.Value, deviceId, cancellationToken);
+            if (!syncPerson.Success)
+                return syncPerson;
+        }
 
         var facesPath = configuration["Storage:FacesPath"] ?? Path.Combine(AppContext.BaseDirectory, "uploads", "faces");
         var fullPath = Path.Combine(facesPath, face.FilePath.TrimStart('/', '\\'));
@@ -377,7 +383,7 @@ public sealed class DevicePersonSyncService(
         return new DeviceSyncResult(false, lastErr ?? "Ошибка синхронизации лица.");
     }
 
-    public async Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default)
+    public async Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true)
     {
         var fp = await dbContext.Fingerprints
             .Include(f => f.Employee)
@@ -403,13 +409,16 @@ public sealed class DevicePersonSyncService(
                 ? TruncateEmployeeNo(GetEmployeeNo(fp.Employee))
                 : GetEmployeeNo(fp.Visitor!);
 
-        var syncPerson = fp.GymCustomerId != null
-            ? await SyncGymCustomerAsync(fp.GymCustomerId.Value, deviceId, cancellationToken)
-            : fp.Employee != null
-                ? await SyncEmployeeAsync(fp.EmployeeId!.Value, deviceId, cancellationToken)
-                : await SyncVisitorAsync(fp.VisitorId!.Value, deviceId, cancellationToken);
-        if (!syncPerson.Success)
-            return syncPerson;
+        if (ensurePerson)
+        {
+            var syncPerson = fp.GymCustomerId != null
+                ? await SyncGymCustomerAsync(fp.GymCustomerId.Value, deviceId, cancellationToken)
+                : fp.Employee != null
+                    ? await SyncEmployeeAsync(fp.EmployeeId!.Value, deviceId, cancellationToken)
+                    : await SyncVisitorAsync(fp.VisitorId!.Value, deviceId, cancellationToken);
+            if (!syncPerson.Success)
+                return syncPerson;
+        }
 
         var readerId = HikvisionIsapiDefaults.GetReaderId(configuration);
         var body = IsapiFingerPrintDownload.BuildJson(

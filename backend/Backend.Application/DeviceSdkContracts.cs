@@ -161,12 +161,17 @@ public interface IDevicePersonSyncService
     Task<DeviceSyncResult> SyncGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Удаляет клиента зала с устройства.</summary>
     Task<DeviceSyncResult> DeleteGymCustomerAsync(Guid customerId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Синхронизирует карту на устройство (CardInfo Record).</summary>
-    Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Синхронизирует лицо на устройство (FDLib pictureUpload).</summary>
-    Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default);
-    /// <summary>Синхронизирует отпечаток на устройство (FingerPrint/SetUp с запасом FingerPrintDownload).</summary>
-    Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default);
+    /// <summary>Синхронизирует карту на устройство (CardInfo Record).
+    /// ensurePerson=false пропускает повторную запись самого пользователя (UserInfo): при
+    /// пакетной записи людей по уровню пользователь уже отправлен отдельным вызовом, и
+    /// переотправлять его на каждую карту/лицо/отпечаток — лишние запросы к устройству.</summary>
+    Task<DeviceSyncResult> SyncCardAsync(Guid cardId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true);
+    /// <summary>Синхронизирует лицо на устройство (FDLib pictureUpload).
+    /// ensurePerson=false — не переотправлять пользователя (см. SyncCardAsync).</summary>
+    Task<DeviceSyncResult> SyncFaceAsync(Guid faceId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true);
+    /// <summary>Синхронизирует отпечаток на устройство (FingerPrint/SetUp с запасом FingerPrintDownload).
+    /// ensurePerson=false — не переотправлять пользователя (см. SyncCardAsync).</summary>
+    Task<DeviceSyncResult> SyncFingerprintAsync(Guid fingerprintId, Guid deviceId, CancellationToken cancellationToken = default, bool ensurePerson = true);
     /// <summary>Удаляет карту с устройства. employeeNo — person ID на терминале (как при синхронизации), часть прошивок требует в теле Delete.</summary>
     Task<DeviceSyncResult> DeleteCardFromDeviceAsync(string cardNo, Guid deviceId, string? employeeNo = null, CancellationToken cancellationToken = default);
     /// <summary>Удаляет лицо с устройства.</summary>

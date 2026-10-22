@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Claims;
 using System.Text;
@@ -1800,7 +1801,7 @@ app.MapPost("/api/access-levels/{id:guid}/people", async (
                     backgroundLogger,
                     appLifetime.ApplicationStopping,
                     levelDeviceIds,
-                    onPersonDone: done => syncTracker.Report(id, done));
+                    onPersonDone: done => syncTracker.Report(id, done), scopeFactory: scopeFactory);
             }
             catch (Exception ex)
             {
@@ -1930,7 +1931,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/remove", async (
                     backgroundLogger,
                     appLifetime.ApplicationStopping,
                     levelDeviceIds,
-                    onPersonDone: done => syncTracker.Report(id, done));
+                    onPersonDone: done => syncTracker.Report(id, done), scopeFactory: scopeFactory);
             }
         }
         catch (Exception ex)
@@ -2029,7 +2030,7 @@ app.MapPost("/api/access-levels/{id:guid}/people/repush", async (
                 backgroundLogger,
                 token,
                 levelDeviceIds,
-                onPersonDone: done => syncTracker.Report(id, done));
+                onPersonDone: done => syncTracker.Report(id, done), scopeFactory: scopeFactory);
         }
         catch (Exception ex)
         {
@@ -11680,7 +11681,10 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
     IReadOnlyCollection<Guid>? restrictToDeviceIds = null,
     // Прогресс по людям для серверного реестра (виден всем сессиям): вызывается с числом
     // обработанных людей после каждого человека.
-    Action<int>? onPersonDone = null)
+    Action<int>? onPersonDone = null,
+    // Фабрика скоупов для параллельной записи по устройствам (каждому устройству — свой
+    // DbContext). null — пишем по устройствам последовательно, как раньше.
+    IServiceScopeFactory? scopeFactory = null)
 {
     var warnings = new List<string>();
     if (personIds.Count == 0) return warnings;
@@ -11751,7 +11755,8 @@ static async Task<List<string>> SyncAccessLevelPeopleAsync(
             activityBroadcaster,
             logger,
             cancellationToken,
-            answeringDevices);
+            answeringDevices,
+            scopeFactory);
 
         warnings.AddRange(personWarnings);
         onPersonDone?.Invoke(++completed);
@@ -11784,16 +11789,19 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
     CancellationToken cancellationToken,
     // Устройства, которые прямо сейчас отвечают. null — проверку не делали, полагаемся
     // только на статус из ARP/SDK, как раньше.
-    IReadOnlySet<Guid>? answeringDevices = null)
+    IReadOnlySet<Guid>? answeringDevices = null,
+    // Фабрика скоупов: если задана и онлайн-устройств больше одного — пишем на устройства
+    // параллельно, каждому свой DbContext. null — последовательно на переданном сервисе.
+    IServiceScopeFactory? scopeFactory = null)
 {
-    var warnings = new List<string>();
+    var warnings = new ConcurrentBag<string>();
     var total = deviceIds.Count;
 
     if (total == 0)
     {
         await broadcaster.NotifyPersonSyncProgressAsync(
             syncId, "complete", 0, 0, Guid.Empty, "", "Нет устройств для синхронизации", cancellationToken);
-        return warnings;
+        return [];
     }
 
     // Snapshot the active-connection set ONCE up front. SDK connections are tracked by
@@ -11830,10 +11838,15 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
         arpStatuses.Where(s => s.Status == DeviceConnectivityStatus.Connected).Select(s => s.DeviceIdentifier),
         StringComparer.OrdinalIgnoreCase);
 
-    var current = 0;
-    foreach (var deviceId in deviceIds)
+    // Сначала разбираем онлайн/офлайн по всем устройствам. Офлайн пропускаем сразу (как
+    // раньше): иначе каждая запись на молчащее устройство стоила бы полного таймаута.
+    // Номер в событии (current/total) оставляем сквозным по списку — он только для показа.
+    var ordered = deviceIds.ToList();
+    var onlineDevices = new List<(Guid DeviceId, int Current)>();
+    for (var i = 0; i < ordered.Count; i++)
     {
-        current++;
+        var deviceId = ordered[i];
+        var current = i + 1;
         var device = devices.TryGetValue(deviceId, out var d) ? d : null;
         var deviceName = device?.Name ?? deviceId.ToString();
         var deviceIdentifier = device?.DeviceIdentifier ?? "";
@@ -11853,15 +11866,27 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
                 syncId, "skipped", current, total, deviceId, deviceName, "Офлайн — пропущено", cancellationToken);
             continue;
         }
+        onlineDevices.Add((deviceId, current));
+    }
+
+    // Запись на одно устройство: пользователь пишется один раз, затем его лицо/отпечаток/
+    // карта — уже без повторной отправки пользователя (ensurePerson: false). Раньше каждая
+    // карта/лицо/отпечаток переотправляли UserInfo заново — лишние запросы на устройство.
+    // svc — сервис из своего scope: при параллельной записи у каждого устройства должен
+    // быть свой DbContext (EF Core не потокобезопасен).
+    async Task PushToDeviceAsync(IDevicePersonSyncService svc, Guid deviceId, int current, CancellationToken token)
+    {
+        var device = devices.TryGetValue(deviceId, out var d) ? d : null;
+        var deviceName = device?.Name ?? deviceId.ToString();
 
         await broadcaster.NotifyPersonSyncProgressAsync(
-            syncId, "syncing", current, total, deviceId, deviceName, "Запись на устройство...", cancellationToken);
+            syncId, "syncing", current, total, deviceId, deviceName, "Запись на устройство...", token);
 
         try
         {
             var result = isEmployee
-                ? await syncService.SyncEmployeeAsync(personId, deviceId, cancellationToken)
-                : await syncService.SyncVisitorAsync(personId, deviceId, cancellationToken);
+                ? await svc.SyncEmployeeAsync(personId, deviceId, token)
+                : await svc.SyncVisitorAsync(personId, deviceId, token);
             if (!result.Success)
             {
                 warnings.Add($"Устройство \"{deviceName}\": {result.Message}");
@@ -11872,24 +11897,24 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
 
             foreach (var face in faces)
             {
-                var fr = await syncService.SyncFaceAsync(face.Id, deviceId, cancellationToken);
+                var fr = await svc.SyncFaceAsync(face.Id, deviceId, token, ensurePerson: false);
                 if (!fr.Success) warnings.Add($"Лицо → \"{deviceName}\": {fr.Message}");
             }
             foreach (var fp in fingerprints)
             {
-                var fr = await syncService.SyncFingerprintAsync(fp.Id, deviceId, cancellationToken);
+                var fr = await svc.SyncFingerprintAsync(fp.Id, deviceId, token, ensurePerson: false);
                 if (!fr.Success) warnings.Add($"Отпечаток → \"{deviceName}\": {fr.Message}");
             }
             foreach (var card in cards)
             {
-                var cr = await syncService.SyncCardAsync(card.Id, deviceId, cancellationToken);
+                var cr = await svc.SyncCardAsync(card.Id, deviceId, token, ensurePerson: false);
                 if (!cr.Success) warnings.Add($"Карта → \"{deviceName}\": {cr.Message}");
             }
 
             await broadcaster.NotifyPersonSyncProgressAsync(
-                syncId, "done", current, total, deviceId, deviceName, "Готово", cancellationToken);
+                syncId, "done", current, total, deviceId, deviceName, "Готово", token);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             throw;
         }
@@ -11898,14 +11923,39 @@ static async Task<List<string>> SyncPersonToDevicesWithProgressAsync(
             warnings.Add($"Устройство \"{deviceName}\": {ex.Message}");
             logger.LogWarning(ex, "Sync to device {DeviceId} ({DeviceName}) threw", deviceId, deviceName);
             await broadcaster.NotifyPersonSyncProgressAsync(
-                syncId, "error", current, total, deviceId, deviceName, ex.Message, cancellationToken);
+                syncId, "error", current, total, deviceId, deviceName, ex.Message, token);
         }
+    }
+
+    if (scopeFactory is not null && onlineDevices.Count > 1)
+    {
+        // Параллельно по устройствам: устройства уровня — независимые адреса, писать их по
+        // очереди незачем. Каждому — свой scope (свой DbContext и свой IsapiClient). При этом
+        // одно устройство в один момент обслуживает ровно одна задача (человек пишется на все
+        // его устройства разом, а не несколько людей сразу в одно устройство) — терминал не
+        // захлёбывается параллельными запросами к себе.
+        await Parallel.ForEachAsync(
+            onlineDevices,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Min(8, onlineDevices.Count), CancellationToken = cancellationToken },
+            async (item, token) =>
+            {
+                using var scope = scopeFactory.CreateScope();
+                var svc = scope.ServiceProvider.GetRequiredService<IDevicePersonSyncService>();
+                await PushToDeviceAsync(svc, item.DeviceId, item.Current, token);
+            });
+    }
+    else
+    {
+        // Одно онлайн-устройство или вызов без scope-фабрики (одиночные операции) — по очереди
+        // на переданном сервисе: поведение как раньше.
+        foreach (var (deviceId, current) in onlineDevices)
+            await PushToDeviceAsync(syncService, deviceId, current, cancellationToken);
     }
 
     await broadcaster.NotifyPersonSyncProgressAsync(
         syncId, "complete", total, total, Guid.Empty, "", null, cancellationToken);
 
-    return warnings;
+    return warnings.ToList();
 }
 
 static DeviceResponse MapDeviceResponse(Device device, string status, DateTime? lastSeenUtc, string? statusMessage = null)
