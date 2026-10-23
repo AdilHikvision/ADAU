@@ -820,6 +820,8 @@ export function AccessLevelsPage() {
                               <span className="w-3 h-3 shrink-0 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                               {sync.stage === 'erasing'
                                 ? t('accessLevelPeople.erasingProgress')
+                                : sync.stage === 'checking'
+                                ? t('accessLevelPeople.writeMissingProgress')
                                 : t('accessLevelPeople.addingProgress', { done: sync.done, total: sync.total })}
                             </span>
                           ) : (
