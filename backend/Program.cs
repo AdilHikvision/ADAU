@@ -1737,6 +1737,52 @@ app.MapGet("/api/access-levels/sync-status", (IAccessLevelSyncTracker tracker) =
         total = s.Total,
     }))).RequireAuthorization("AccessLevels.View");
 
+// Реальное число людей на каждом устройстве уровня — читается с самих устройств
+// (ISAPI UserInfo/Count), а не из базы. Показывает, сколько фактически записано на
+// устройство 1, устройство 2 и т.д., и расхождение с числом назначенных в базе.
+app.MapGet("/api/access-levels/{id:guid}/device-counts", async (
+    Guid id,
+    AppDbContext dbContext,
+    IDevicePersonSyncService syncService,
+    CancellationToken cancellationToken) =>
+{
+    if (!await dbContext.AccessLevels.AnyAsync(x => x.Id == id, cancellationToken))
+        return Results.NotFound();
+
+    // Устройства уровня (полные сущности — чтение счётчика к БД не обращается, можно параллельно).
+    var deviceIds = await dbContext.AccessLevelDoors.AsNoTracking()
+        .Where(d => d.AccessLevelId == id)
+        .Select(d => d.DeviceId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var devices = await dbContext.Devices.AsNoTracking()
+        .Where(d => deviceIds.Contains(d.Id))
+        .ToListAsync(cancellationToken);
+
+    // Для сравнения — сколько активных людей назначено на уровень в базе.
+    var assignedInDb = await dbContext.EmployeeAccessLevels.AsNoTracking()
+        .Where(x => x.AccessLevelId == id && x.Employee!.IsActive)
+        .Select(x => x.EmployeeId)
+        .Distinct()
+        .CountAsync(cancellationToken);
+
+    var results = new System.Collections.Concurrent.ConcurrentBag<(Guid DeviceId, string Name, bool Online, int? UserNumber, string? Error)>();
+    await Parallel.ForEachAsync(
+        devices,
+        new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Math.Min(8, devices.Count)), CancellationToken = cancellationToken },
+        async (device, token) =>
+        {
+            var c = await syncService.GetDeviceUserCountAsync(device, token);
+            results.Add((device.Id, device.Name, c.Online, c.UserNumber, c.Error));
+        });
+
+    var ordered = results
+        .OrderBy(r => r.Name, StringComparer.CurrentCulture)
+        .Select(r => new { deviceId = r.DeviceId, name = r.Name, online = r.Online, userNumber = r.UserNumber, error = r.Error })
+        .ToList();
+    return Results.Ok(new { assignedInDb, devices = ordered });
+}).RequireAuthorization("AccessLevels.View");
+
 app.MapPost("/api/access-levels/{id:guid}/people", async (
     Guid id,
     AssignAccessLevelPeopleRequest request,

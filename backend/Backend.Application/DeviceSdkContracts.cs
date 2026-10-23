@@ -151,8 +151,18 @@ public interface IDeviceDoorControlService
 /// Заполняется там, где сообщение видит пользователь; остальные вызовы не меняются.</summary>
 public sealed record DeviceSyncResult(bool Success, string? Message, string? MessageCode = null);
 
+/// <summary>Реальное число пользователей на устройстве (ISAPI UserInfo/Count → userNumber).</summary>
+/// <param name="Online">Ответило ли устройство на запрос.</param>
+/// <param name="UserNumber">Сколько людей фактически записано на устройстве (null, если не удалось прочитать).</param>
+public sealed record DeviceUserCount(Guid DeviceId, bool Online, int? UserNumber, string? Error);
+
 public interface IDevicePersonSyncService
 {
+    /// <summary>Читает с устройства реальное число записанных пользователей (ISAPI
+    /// GET /ISAPI/AccessControl/UserInfo/Count → userNumber). Принимает уже загруженный
+    /// Device, к БД не обращается — безопасно звать параллельно по устройствам уровня.</summary>
+    Task<DeviceUserCount> GetDeviceUserCountAsync(Backend.Domain.Entities.Device device, CancellationToken cancellationToken = default);
+
     /// <summary>Синхронизирует сотрудника на устройство (UserInfo Record).</summary>
     Task<DeviceSyncResult> SyncEmployeeAsync(Guid employeeId, Guid deviceId, CancellationToken cancellationToken = default);
     /// <summary>Синхронизирует посетителя на устройство (UserInfo Record).</summary>

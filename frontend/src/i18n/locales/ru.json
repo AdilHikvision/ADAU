@@ -3418,6 +3418,14 @@
     "clear": "Очистить"
   },
   "accessLevelPeople": {
+    "deviceCountsTitle": "Реально на устройствах",
+    "deviceCountsRefresh": "Сверить с устройствами",
+    "deviceCountsAssigned": "В базе назначено: {{count}} чел.",
+    "deviceCountsPeople": "{{count}} чел.",
+    "deviceCountsOffline": "офлайн",
+    "deviceCountsUnknown": "не удалось прочитать",
+    "deviceCountsNoDevices": "У уровня нет устройств.",
+    "deviceCountsFailed": "Не удалось прочитать данные с устройств.",
     "collapse": "Свернуть",
     "progressBackgroundHint": "Окно можно закрыть — запись продолжится, ход виден на карточке уровня.",
     "erasingProgress": "Стирание старых данных с устройств…",

@@ -3401,6 +3401,14 @@
     "clear": "Clear"
   },
   "accessLevelPeople": {
+    "deviceCountsTitle": "Actually on devices",
+    "deviceCountsRefresh": "Check devices",
+    "deviceCountsAssigned": "Assigned in database: {{count}}",
+    "deviceCountsPeople": "{{count}} people",
+    "deviceCountsOffline": "offline",
+    "deviceCountsUnknown": "could not read",
+    "deviceCountsNoDevices": "The level has no devices.",
+    "deviceCountsFailed": "Could not read data from devices.",
     "collapse": "Minimise",
     "progressBackgroundHint": "You can close this window — writing continues, the progress is shown on the level card.",
     "erasingProgress": "Erasing the old data from the devices…",

@@ -222,6 +222,13 @@ export function AccessLevelsPage() {
   const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
   const assignSaving = peopleProgress !== null
 
+  // Реальное число людей на каждом устройстве уровня — читается с самих устройств
+  // (ISAPI UserInfo/Count), а не из базы. Показывает, сколько фактически записано.
+  type DeviceCountRow = { deviceId: string; name: string; online: boolean; userNumber: number | null; error: string | null }
+  const [deviceCounts, setDeviceCounts] = useState<{ assignedInDb: number; devices: DeviceCountRow[] } | null>(null)
+  const [deviceCountsLoading, setDeviceCountsLoading] = useState(false)
+  const [deviceCountsError, setDeviceCountsError] = useState<string | null>(null)
+
   /** Сколько людей показывать на карточке уровня — по правилам модуля. */
   const peopleCountOf = (item: AccessLevel) =>
     (item.employeeCount ?? 0) + (withResidents ? item.residentCount ?? 0 : 0)
@@ -256,7 +263,27 @@ export function AccessLevelsPage() {
     setLevelPeople([])
     // Выбор относится к составу конкретного уровня — начинаем с чистого.
     setSelectedPeople(new Set())
+    // Реальные счётчики с устройств — по кнопке, не при каждом открытии (это сетевые запросы).
+    setDeviceCounts(null)
+    setDeviceCountsError(null)
     await loadLevelPeople(item.id)
+  }
+
+  /** Считывает реальное число людей с каждого устройства уровня (ISAPI UserInfo/Count). */
+  async function loadDeviceCounts() {
+    if (!token || !peopleItem) return
+    setDeviceCountsLoading(true)
+    setDeviceCountsError(null)
+    try {
+      const res = await apiRequest<{ assignedInDb: number; devices: DeviceCountRow[] }>(
+        `/api/access-levels/${peopleItem.id}/device-counts`, { token })
+      setDeviceCounts(res)
+    } catch (e) {
+      setDeviceCounts(null)
+      setDeviceCountsError(e instanceof Error ? e.message : t('accessLevelPeople.deviceCountsFailed'))
+    } finally {
+      setDeviceCountsLoading(false)
+    }
   }
 
   /** Справочник для окна выбора грузим один раз при первом открытии. */
@@ -1020,6 +1047,50 @@ export function AccessLevelsPage() {
                 {t('accessLevelPeople.add')}
               </Button>
             </div>
+          </div>
+
+          {/* Реальное число людей с самих устройств (ISAPI UserInfo/Count), не из базы. */}
+          <div className="rounded-xl border border-border-light p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold text-text-light uppercase tracking-widest">
+                {t('accessLevelPeople.deviceCountsTitle')}
+              </p>
+              <Button type="button" variant="outline" icon="storage" onClick={loadDeviceCounts} disabled={deviceCountsLoading}>
+                {deviceCountsLoading ? t('common.loading') : t('accessLevelPeople.deviceCountsRefresh')}
+              </Button>
+            </div>
+            {deviceCountsError && (
+              <p className="mt-2 text-xs font-bold text-error-text">{deviceCountsError}</p>
+            )}
+            {deviceCounts && (
+              <div className="mt-2">
+                <p className="text-[11px] text-text-light mb-1">
+                  {t('accessLevelPeople.deviceCountsAssigned', { count: deviceCounts.assignedInDb })}
+                </p>
+                {deviceCounts.devices.length === 0 ? (
+                  <p className="text-xs text-text-light">{t('accessLevelPeople.deviceCountsNoDevices')}</p>
+                ) : (
+                  <div className="divide-y divide-border-light">
+                    {deviceCounts.devices.map((d) => (
+                      <div key={d.deviceId} className="flex items-center justify-between gap-3 py-1.5">
+                        <span className="text-sm font-bold text-text-dark truncate">{d.name}</span>
+                        <span className="text-sm font-black shrink-0">
+                          {!d.online ? (
+                            <span className="text-text-light">{t('accessLevelPeople.deviceCountsOffline')}</span>
+                          ) : d.userNumber === null ? (
+                            <span className="text-error-text" title={d.error ?? ''}>{t('accessLevelPeople.deviceCountsUnknown')}</span>
+                          ) : (
+                            <span className={d.userNumber < deviceCounts.assignedInDb ? 'text-warning-text' : 'text-success-text'}>
+                              {t('accessLevelPeople.deviceCountsPeople', { count: d.userNumber })}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {peopleLoading ? (

@@ -3392,6 +3392,14 @@
     "clear": "Təmizlə"
   },
   "accessLevelPeople": {
+    "deviceCountsTitle": "Cihazlarda faktiki",
+    "deviceCountsRefresh": "Cihazlarla tutuşdur",
+    "deviceCountsAssigned": "Bazada təyin edilib: {{count}} nəfər",
+    "deviceCountsPeople": "{{count}} nəfər",
+    "deviceCountsOffline": "oflayn",
+    "deviceCountsUnknown": "oxumaq alınmadı",
+    "deviceCountsNoDevices": "Səviyyədə cihaz yoxdur.",
+    "deviceCountsFailed": "Cihazlardan məlumat oxumaq alınmadı.",
     "collapse": "Yığ",
     "progressBackgroundHint": "Pəncərəni bağlaya bilərsiniz — yazma davam edir, gedişat səviyyə kartında görünür.",
     "erasingProgress": "Köhnə məlumatlar qurğulardan silinir…",

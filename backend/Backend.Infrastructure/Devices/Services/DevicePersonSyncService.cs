@@ -790,6 +790,58 @@ public sealed class DevicePersonSyncService(
         return (ok, error);
     }
 
+    /// <summary>Читает фактическое число людей на устройстве: GET UserInfo/Count → userNumber.
+    /// К БД не обращается (принимает готовый Device), поэтому безопасно звать параллельно.</summary>
+    public async Task<DeviceUserCount> GetDeviceUserCountAsync(Device device, CancellationToken cancellationToken = default)
+    {
+        var alive = await IsDeviceAnsweringAsync(device, cancellationToken);
+        if (!alive.Answering)
+            return new DeviceUserCount(device.Id, false, null, alive.Error ?? "Устройство недоступно.");
+
+        var client = CreateClient(device, TimeSpan.FromSeconds(10));
+        var (ok, content, err) = await client.GetAsync("ISAPI/AccessControl/UserInfo/Count?format=json", cancellationToken);
+        if (!ok || string.IsNullOrWhiteSpace(content))
+            return new DeviceUserCount(device.Id, true, null, err ?? "Устройство не ответило на UserInfo/Count.");
+
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            if (TryFindUserNumber(doc.RootElement, out var number))
+                return new DeviceUserCount(device.Id, true, number, null);
+            return new DeviceUserCount(device.Id, true, null, "В ответе нет userNumber.");
+        }
+        catch (JsonException)
+        {
+            return new DeviceUserCount(device.Id, true, null, "Некорректный JSON в ответе UserInfo/Count.");
+        }
+    }
+
+    /// <summary>Ищет узел userNumber в ответе (обычно UserInfoCount.userNumber), терпимо к обёрткам.</summary>
+    private static bool TryFindUserNumber(JsonElement element, out int number)
+    {
+        number = 0;
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var prop in element.EnumerateObject())
+                {
+                    if (string.Equals(prop.Name, "userNumber", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (prop.Value.ValueKind == JsonValueKind.Number && prop.Value.TryGetInt32(out number)) return true;
+                        if (prop.Value.ValueKind == JsonValueKind.String && int.TryParse(prop.Value.GetString(), out number)) return true;
+                    }
+                    if (TryFindUserNumber(prop.Value, out number)) return true;
+                }
+                return false;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    if (TryFindUserNumber(item, out number)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>
     /// Стирание списка людей одним запросом. Поддерживают не все прошивки, поэтому
     /// вызывающий код при неуспехе повторяет поштучно.
