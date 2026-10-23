@@ -1783,6 +1783,72 @@ app.MapGet("/api/access-levels/{id:guid}/device-counts", async (
     return Results.Ok(new { assignedInDb, devices = ordered });
 }).RequireAuthorization("AccessLevels.View");
 
+// Дописать недостающих: сверяет список на каждом устройстве уровня (ISAPI UserInfo/Search)
+// с назначенными в базе и записывает ТОЛЬКО тех, кого на устройстве ещё нет. База не меняется.
+// Отвечает сразу, работа идёт в фоне и докладывает о себе событиями PersonSyncProgress (как запись).
+app.MapPost("/api/access-levels/{id:guid}/write-missing", async (
+    Guid id,
+    AssignAccessLevelPeopleRequest request,
+    AppDbContext dbContext,
+    IAccessLevelSyncTracker syncTracker,
+    IServiceScopeFactory scopeFactory,
+    IHostApplicationLifetime appLifetime,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (!await dbContext.AccessLevels.AnyAsync(x => x.Id == id, cancellationToken))
+        return Results.NotFound();
+
+    static string ResolveNo(Guid personId, string? employeeNo)
+    {
+        var no = !string.IsNullOrWhiteSpace(employeeNo) ? employeeNo.Trim() : personId.ToString("N")[..32];
+        return no.Length > 32 ? no[..32] : no;
+    }
+    var assignedRaw = await dbContext.EmployeeAccessLevels.AsNoTracking()
+        .Where(x => x.AccessLevelId == id && x.Employee!.IsActive)
+        .Select(x => new { x.EmployeeId, x.Employee!.EmployeeNo })
+        .Distinct()
+        .ToListAsync(cancellationToken);
+    var assigned = assignedRaw
+        .Select(a => (PersonId: a.EmployeeId, EmployeeNo: ResolveNo(a.EmployeeId, a.EmployeeNo)))
+        .ToList();
+
+    var levelDeviceIds = await dbContext.AccessLevelDoors.AsNoTracking()
+        .Where(d => d.AccessLevelId == id)
+        .Select(d => d.DeviceId)
+        .Distinct()
+        .ToListAsync(cancellationToken);
+
+    var syncId = string.IsNullOrWhiteSpace(request.SyncId) ? Guid.NewGuid().ToString("N") : request.SyncId!.Trim();
+    if (assigned.Count == 0 || levelDeviceIds.Count == 0)
+        return Results.Ok(new { syncId, assigned = assigned.Count, devices = levelDeviceIds.Count });
+
+    syncTracker.Start(id, assigned.Count, "writing");
+    _ = Task.Run(async () =>
+    {
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var backgroundLogger = sp.GetRequiredService<ILogger<Program>>();
+        var broadcaster = sp.GetRequiredService<IDeviceActivityBroadcaster>();
+        try
+        {
+            await ReconcileAndWriteMissingAsync(
+                syncId, assigned, levelDeviceIds, scopeFactory, broadcaster, backgroundLogger, appLifetime.ApplicationStopping);
+        }
+        catch (Exception ex)
+        {
+            backgroundLogger.LogError(ex, "Access level {LevelId}: write-missing failed", id);
+        }
+        finally
+        {
+            syncTracker.Finish(id);
+            await NotifyBatchCompleteAsync(broadcaster, syncId, assigned.Count, assigned.Count, CancellationToken.None);
+        }
+    }, CancellationToken.None);
+
+    return Results.Ok(new { syncId, assigned = assigned.Count, devices = levelDeviceIds.Count });
+}).RequireAuthorization("AccessLevels.Manage");
+
 app.MapPost("/api/access-levels/{id:guid}/people", async (
     Guid id,
     AssignAccessLevelPeopleRequest request,
@@ -11813,6 +11879,108 @@ static IProgress<DevicePersonDeleteProgress> DeviceEraseProgress(IDeviceActivity
 static Task NotifyBatchCompleteAsync(
     IDeviceActivityBroadcaster broadcaster, string syncId, int done, int total, CancellationToken ct)
     => broadcaster.NotifyPersonSyncProgressAsync(syncId, "complete", done, total, Guid.Empty, "", "batch-complete", ct);
+
+// Сверяет состав каждого устройства уровня с назначенными в базе и дописывает только тех,
+// кого на устройстве нет. Устройства обрабатываются параллельно (свой scope на устройство).
+static async Task ReconcileAndWriteMissingAsync(
+    string syncId,
+    IReadOnlyList<(Guid PersonId, string EmployeeNo)> assigned,
+    IReadOnlyList<Guid> deviceIds,
+    IServiceScopeFactory scopeFactory,
+    IDeviceActivityBroadcaster broadcaster,
+    Microsoft.Extensions.Logging.ILogger logger,
+    CancellationToken ct)
+{
+    await Parallel.ForEachAsync(
+        deviceIds,
+        new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Math.Min(8, deviceIds.Count)), CancellationToken = ct },
+        async (deviceId, token) =>
+        {
+            using var scope = scopeFactory.CreateScope();
+            var sp = scope.ServiceProvider;
+            var db = sp.GetRequiredService<AppDbContext>();
+            var importSvc = sp.GetRequiredService<IDevicePersonImportService>();
+            var syncSvc = sp.GetRequiredService<IDevicePersonSyncService>();
+
+            var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == deviceId, token);
+            if (device is null) return;
+            var deviceName = device.Name;
+
+            try
+            {
+                await broadcaster.NotifyPersonSyncProgressAsync(syncId, "syncing", 0, 0, deviceId, deviceName, "Читаю список с устройства…", token);
+
+                // Онлайн + реальный счёт: отличить офлайн/нечитаемое от «на устройстве пусто».
+                var count = await syncSvc.GetDeviceUserCountAsync(device, token);
+                if (!count.Online)
+                {
+                    await broadcaster.NotifyPersonSyncProgressAsync(syncId, "skipped", 0, 0, deviceId, deviceName, "Офлайн — пропущено", token);
+                    return;
+                }
+
+                var present = await importSvc.FetchUsersFromDeviceAsync(deviceId, token);
+                var presentNos = new HashSet<string>(
+                    present.Select(u => u.EmployeeNo).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()),
+                    StringComparer.Ordinal);
+
+                // Устройство говорит, что люди есть, а список прочитать не вышло — не массово переписываем.
+                if ((count.UserNumber ?? 0) > 0 && presentNos.Count == 0)
+                {
+                    await broadcaster.NotifyPersonSyncProgressAsync(syncId, "error", 0, 0, deviceId, deviceName, "Не удалось прочитать список пользователей — пропущено", token);
+                    return;
+                }
+
+                var missing = assigned.Where(a => !presentNos.Contains(a.EmployeeNo)).ToList();
+                if (missing.Count == 0)
+                {
+                    await broadcaster.NotifyPersonSyncProgressAsync(syncId, "skipped", 0, 0, deviceId, deviceName, "Все на месте", token);
+                    return;
+                }
+
+                foreach (var (personId, _) in missing)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var ok = true;
+                    string? err = null;
+
+                    var res = await syncSvc.SyncEmployeeAsync(personId, deviceId, token);
+                    if (!res.Success) { ok = false; err = res.Message; }
+
+                    var faceIds = await db.Faces.AsNoTracking().Where(f => f.EmployeeId == personId).Select(f => f.Id).ToListAsync(token);
+                    foreach (var fid in faceIds)
+                    {
+                        var r = await syncSvc.SyncFaceAsync(fid, deviceId, token, ensurePerson: false);
+                        if (!r.Success) { ok = false; err ??= r.Message; }
+                    }
+                    var fpIds = await db.Fingerprints.AsNoTracking().Where(f => f.EmployeeId == personId).Select(f => f.Id).ToListAsync(token);
+                    foreach (var fpid in fpIds)
+                    {
+                        var r = await syncSvc.SyncFingerprintAsync(fpid, deviceId, token, ensurePerson: false);
+                        if (!r.Success) { ok = false; err ??= r.Message; }
+                    }
+                    var cardIds = await db.Cards.AsNoTracking().Where(c => c.EmployeeId == personId).Select(c => c.Id).ToListAsync(token);
+                    foreach (var cid in cardIds)
+                    {
+                        var r = await syncSvc.SyncCardAsync(cid, deviceId, token, ensurePerson: false);
+                        if (!r.Success) { ok = false; err ??= r.Message; }
+                    }
+
+                    await broadcaster.NotifyPersonSyncProgressAsync(syncId, ok ? "done" : "error", 0, 0, deviceId, deviceName, ok ? null : err, token);
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Write-missing to device {DeviceId} ({DeviceName}) failed", deviceId, deviceName);
+                await broadcaster.NotifyPersonSyncProgressAsync(syncId, "error", 0, 0, deviceId, deviceName, ex.Message, token);
+            }
+        });
+
+    await broadcaster.NotifyPersonSyncProgressAsync(syncId, "complete", 0, 0, Guid.Empty, "", "batch-complete", ct);
+}
 
 static async Task<List<string>> SyncAccessLevelPeopleAsync(
     string syncId,

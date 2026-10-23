@@ -214,12 +214,12 @@ export function AccessLevelsPage() {
   // прогресса, а по завершении — окно с итогом (в нём же предупреждения синхронизации).
   // Итог показываем разбивкой по устройствам: видно, куда записалось, а куда нет.
   type DeviceOutcome = { name: string; done: number; skipped: number; errors: number }
-  const [peopleProgress, setPeopleProgress] = useState<{ levelId: string; kind: 'assign' | 'remove' | 'repush'; count: number; name?: string; done?: number; device?: string; erasing?: boolean } | null>(null)
+  const [peopleProgress, setPeopleProgress] = useState<{ levelId: string; kind: 'assign' | 'remove' | 'repush' | 'writeMissing'; count: number; name?: string; done?: number; device?: string; erasing?: boolean } | null>(null)
   // Окно можно свернуть: запись идёт на сервере и продолжится без открытого окна.
   const [progressOpen, setProgressOpen] = useState(false)
   // Снятие уровня и перезапись работают с выбранными в списке людьми.
   const [selectedPeople, setSelectedPeople] = useState<Set<string>>(new Set())
-  const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
+  const [peopleResult, setPeopleResult] = useState<{ kind: 'assign' | 'remove' | 'repush' | 'writeMissing'; added: number; alreadyAssigned: number; name?: string; warnings: string[]; devices?: DeviceOutcome[] } | null>(null)
   const assignSaving = peopleProgress !== null
 
   // Реальное число людей на каждом устройстве уровня — читается с самих устройств
@@ -412,6 +412,36 @@ export function AccessLevelsPage() {
             ? [t('accessLevelPeople.syncIncomplete', { done: synced.done, total: added })]
             : []),
         ],
+      })
+    } catch (e) {
+      setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
+    } finally {
+      setPeopleProgress(null)
+    }
+  }
+
+  /** Сверяет устройства уровня со списком в базе и дописывает только отсутствующих. База не меняется. */
+  async function writeMissing() {
+    if (!token || !peopleItem) return
+    const syncId = newId('sync').replace(/-/g, '')
+    setPeopleProgress({ levelId: peopleItem.id, kind: 'writeMissing', count: levelPeople.length, done: 0 })
+    setProgressOpen(true)
+    setPeopleError(null)
+    try {
+      const res = await apiRequest<{ syncId?: string; assigned?: number; devices?: number }>(
+        `/api/access-levels/${peopleItem.id}/write-missing`,
+        { method: 'POST', token, body: JSON.stringify({ syncId }) },
+      )
+      const synced = await waitForDeviceSync(res.syncId ?? syncId)
+      const written = synced.devices.reduce((s, d) => s + d.done, 0)
+      // После дописывания обновим реальные счётчики, чтобы сразу видеть новые числа.
+      await loadDeviceCounts().catch(() => undefined)
+      setPeopleResult({
+        kind: 'writeMissing',
+        added: written,
+        alreadyAssigned: 0,
+        devices: synced.devices,
+        warnings: synced.warnings,
       })
     } catch (e) {
       setPeopleError(e instanceof Error ? e.message : t('accessLevelPeople.saveFailed'))
@@ -804,7 +834,9 @@ export function AccessLevelsPage() {
                             className="mt-1 flex items-center gap-2 text-[11px] font-bold text-primary hover:text-primary-dark"
                           >
                             <span className="w-3 h-3 shrink-0 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                            {peopleProgress.erasing
+                            {peopleProgress.kind === 'writeMissing'
+                              ? t('accessLevelPeople.writeMissingProgress')
+                              : peopleProgress.erasing
                               ? t('accessLevelPeople.erasingProgress')
                               : t('accessLevelPeople.addingProgress', { done: peopleProgress.done ?? 0, total: peopleProgress.count })}
                           </button>
@@ -1055,9 +1087,14 @@ export function AccessLevelsPage() {
               <p className="text-xs font-bold text-text-light uppercase tracking-widest">
                 {t('accessLevelPeople.deviceCountsTitle')}
               </p>
-              <Button type="button" variant="outline" icon="storage" onClick={loadDeviceCounts} disabled={deviceCountsLoading}>
-                {deviceCountsLoading ? t('common.loading') : t('accessLevelPeople.deviceCountsRefresh')}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" icon="storage" onClick={loadDeviceCounts} disabled={deviceCountsLoading || assignSaving}>
+                  {deviceCountsLoading ? t('common.loading') : t('accessLevelPeople.deviceCountsRefresh')}
+                </Button>
+                <Button type="button" icon="playlist_add_check" onClick={writeMissing} disabled={assignSaving || deviceCountsLoading}>
+                  {t('accessLevelPeople.writeMissing')}
+                </Button>
+              </div>
             </div>
             {deviceCountsError && (
               <p className="mt-2 text-xs font-bold text-error-text">{deviceCountsError}</p>
@@ -1149,7 +1186,9 @@ export function AccessLevelsPage() {
           <div className="w-10 h-10 shrink-0 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
           <div className="min-w-0">
             <p className="text-sm font-bold text-text-dark">
-              {peopleProgress?.kind === 'remove'
+              {peopleProgress?.kind === 'writeMissing'
+                ? t('accessLevelPeople.writeMissingBody')
+                : peopleProgress?.kind === 'remove'
                 ? (peopleProgress.name
                   ? t('accessLevelPeople.removingBody', { name: peopleProgress.name })
                   : t('accessLevelPeople.removingSelectedBody', { count: peopleProgress.count }))
@@ -1159,7 +1198,9 @@ export function AccessLevelsPage() {
             </p>
             {peopleProgress?.kind !== 'remove' && peopleProgress?.done !== undefined && (
               <p className="mt-1 text-xs text-text-light truncate">
-                {peopleProgress.erasing
+                {peopleProgress.kind === 'writeMissing'
+                  ? t('accessLevelPeople.writeMissingProgress')
+                  : peopleProgress.erasing
                   ? t('accessLevelPeople.erasingProgress')
                   : t('accessLevelPeople.addingProgress', { done: peopleProgress.done, total: peopleProgress.count })}
                 {peopleProgress.device ? ` · ${peopleProgress.device}` : ''}
@@ -1183,7 +1224,9 @@ export function AccessLevelsPage() {
       >
         <div className="space-y-4">
           <div className="space-y-1 text-sm font-bold text-text-dark">
-            {peopleResult?.kind === 'repush' ? (
+            {peopleResult?.kind === 'writeMissing' ? (
+              <p>{t('accessLevelPeople.writeMissingDone', { count: peopleResult?.added ?? 0 })}</p>
+            ) : peopleResult?.kind === 'repush' ? (
               <p>{t('accessLevelPeople.repushed', { count: peopleResult?.added ?? 0 })}</p>
             ) : peopleResult?.kind === 'remove' ? (
               <p>
